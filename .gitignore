@@ -1,0 +1,15 @@
+.pytest_cache/
+.pytest-tmp/
+.build-tools/
+.idea/
+.verify-basetemp-*/
+.venv/
+bin/
+dist/
+build/
+*.egg-info/
+*.tgz
+node_modules/
+npm/bin/
+__pycache__/
+*.pyc

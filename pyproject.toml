@@ -1,0 +1,65 @@
+[build-system]
+requires = ["hatchling>=1.27.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "codex-plus-plus-launcher"
+version = "0.1.10"
+description = "Launcher and installer wrapper for Codex++"
+readme = "README_PYPI.md"
+requires-python = ">=3.10"
+dependencies = []
+keywords = ["codex", "launcher", "installer", "codexplusplus"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Intended Audience :: End Users/Desktop",
+  "Operating System :: MacOS",
+  "Operating System :: Microsoft :: Windows",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+]
+
+[project.urls]
+Homepage = "https://github.com/duanluan/codex-plus-plus-launcher"
+Repository = "https://github.com/duanluan/codex-plus-plus-launcher"
+Issues = "https://github.com/duanluan/codex-plus-plus-launcher/issues"
+
+[project.optional-dependencies]
+test = ["pytest>=8.0"]
+
+[project.scripts]
+cxpp = "codex_plus_plus_launcher.cli:main"
+codexpp = "codex_plus_plus_launcher.cli:main"
+codex-plus-plus-launcher = "codex_plus_plus_launcher.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["codex_plus_plus_launcher"]
+include = [
+  "codex_plus_plus_launcher/assets/codex-plus-plus.ico",
+]
+
+[tool.hatch.build.targets.sdist]
+include = [
+  "codex_plus_plus_launcher/*.py",
+  "codex_plus_plus_launcher/assets/codex-plus-plus.ico",
+  "README.md",
+  "README_PYPI.md",
+  "README_EN.md",
+  "install.sh",
+  "install.ps1",
+  "package.json",
+  "npm/*.js",
+  "npm/*.json",
+  "tests/*.py",
+  "pyproject.toml",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

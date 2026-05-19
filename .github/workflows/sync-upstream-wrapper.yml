@@ -1,0 +1,164 @@
+name: sync-upstream-wrapper
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 3 * * *"
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Resolve upstream version
+        id: upstream
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          python -m pip install --upgrade pip
+          python -c "from codex_plus_plus_launcher.upstream_release import write_latest_release_json; write_latest_release_json('.github/upstream-release.json')"
+          upstream_version="$(python -c "import json; print(json.load(open('.github/upstream-release.json', encoding='utf-8'))['version'])")"
+          echo "version=${upstream_version}" >> "$GITHUB_OUTPUT"
+
+      - name: Read current package version
+        id: current
+        shell: bash
+        run: |
+          package_version="$(node -p "require('./package.json').version")"
+          echo "version=${package_version}" >> "$GITHUB_OUTPUT"
+
+      - name: Read recorded upstream version
+        id: recorded
+        shell: bash
+        run: |
+          if [ -f ".github/upstream-sync/latest.json" ]; then
+            recorded_version="$(python - <<'PY'
+import json
+from pathlib import Path
+payload = json.loads(Path(".github/upstream-sync/latest.json").read_text(encoding="utf-8"))
+print(payload.get("upstream_version", ""))
+PY
+)"
+          else
+            recorded_version=""
+          fi
+          echo "version=${recorded_version}" >> "$GITHUB_OUTPUT"
+
+      - name: Compute sync branch name
+        id: branch
+        shell: bash
+        run: |
+          echo "name=codex/sync-upstream-${{ steps.upstream.outputs.version }}" >> "$GITHUB_OUTPUT"
+
+      - name: Stop when upstream version is already recorded
+        if: steps.recorded.outputs.version == steps.upstream.outputs.version
+        shell: bash
+        run: |
+          echo "upstream version already recorded"
+
+      - name: Check existing branch
+        id: existing
+        if: steps.recorded.outputs.version != steps.upstream.outputs.version
+        shell: bash
+        run: |
+          if git ls-remote --exit-code --heads origin "${{ steps.branch.outputs.name }}" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Stop if sync branch already exists
+        if: steps.recorded.outputs.version != steps.upstream.outputs.version && steps.existing.outputs.exists == 'true'
+        shell: bash
+        run: |
+          echo "sync branch already exists"
+
+      - name: Bump wrapper patch version
+        if: steps.recorded.outputs.version != steps.upstream.outputs.version && steps.existing.outputs.exists != 'true'
+        shell: bash
+        run: |
+          python - <<'PY'
+import json
+import re
+from pathlib import Path
+
+package_json = Path("package.json")
+payload = json.loads(package_json.read_text(encoding="utf-8"))
+major, minor, patch = map(int, payload["version"].split("."))
+next_version = f"{major}.{minor}.{patch + 1}"
+payload["version"] = next_version
+package_json.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+
+for relative_path, pattern in [
+    ("pyproject.toml", r'^version = ".*"$'),
+    ("codex_plus_plus_launcher/__init__.py", r'^__version__ = ".*"$'),
+]:
+    path = Path(relative_path)
+    text = path.read_text(encoding="utf-8")
+    updated = re.sub(pattern, lambda _m: f'version = "{next_version}"' if relative_path.endswith("pyproject.toml") else f'__version__ = "{next_version}"', text, flags=re.MULTILINE)
+    path.write_text(updated, encoding="utf-8")
+PY
+
+      - name: Update text tests for new wrapper version
+        if: steps.recorded.outputs.version != steps.upstream.outputs.version && steps.existing.outputs.exists != 'true'
+        shell: bash
+        run: |
+          python - <<'PY'
+from pathlib import Path
+import re
+import json
+
+version = json.loads(Path("package.json").read_text(encoding="utf-8"))["version"]
+path = Path("tests/test_installers_text.py")
+text = path.read_text(encoding="utf-8")
+text = re.sub(r'"version": "\d+\.\d+\.\d+"', f'"version": "{version}"', text)
+path.write_text(text, encoding="utf-8")
+PY
+
+      - name: Record upstream sync metadata
+        if: steps.recorded.outputs.version != steps.upstream.outputs.version && steps.existing.outputs.exists != 'true'
+        shell: bash
+        run: |
+          mkdir -p .github/upstream-sync
+          cat > .github/upstream-sync/latest.json <<JSON
+          {
+            "upstream_version": "${{ steps.upstream.outputs.version }}",
+            "synced_at": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+          }
+          JSON
+
+      - name: Create sync branch and commit
+        if: steps.recorded.outputs.version != steps.upstream.outputs.version && steps.existing.outputs.exists != 'true'
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "${{ steps.branch.outputs.name }}"
+          git add package.json pyproject.toml codex_plus_plus_launcher/__init__.py tests/test_installers_text.py .github/upstream-sync/latest.json
+          git commit -m "chore: sync upstream Codex++ ${{ steps.upstream.outputs.version }}"
+          git push origin "${{ steps.branch.outputs.name }}"
+
+      - name: Open sync pull request
+        if: steps.recorded.outputs.version != steps.upstream.outputs.version && steps.existing.outputs.exists != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          gh pr create \
+            --base main \
+            --head "${{ steps.branch.outputs.name }}" \
+            --title "chore: sync upstream Codex++ ${{ steps.upstream.outputs.version }}" \
+            --body "Automated wrapper sync for upstream Codex++ ${{ steps.upstream.outputs.version }}. This keeps Windows/npm users on the latest bundled upstream version without requiring local Python."

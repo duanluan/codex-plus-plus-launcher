@@ -1,0 +1,45 @@
+name: deprecate-legacy-npm
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/deprecate-legacy-npm.yml"
+  workflow_dispatch:
+
+jobs:
+  retire:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Retire pre-0.1.10 versions
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        shell: bash
+        run: |
+          set -u
+
+          package="@duanluan/codex-plus-plus-launcher"
+          message="Versions before 0.1.10 are deprecated. Please upgrade to 0.1.10 or later for the Windows npm upgrade prompt and latest launcher fixes."
+          versions=(0.1.7 0.1.8 0.1.9)
+
+          for version in "${versions[@]}"; do
+            if ! npm view "${package}@${version}" version >/dev/null 2>&1; then
+              echo "${package}@${version} is already unavailable"
+              continue
+            fi
+
+            if npm unpublish "${package}@${version}" --force; then
+              echo "unpublished ${package}@${version}"
+            else
+              echo "could not unpublish ${package}@${version}; deprecating instead"
+              npm deprecate "${package}@${version}" "${message}"
+              npm view "${package}@${version}" deprecated
+            fi
+          done

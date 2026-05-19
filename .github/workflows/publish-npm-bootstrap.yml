@@ -1,0 +1,93 @@
+name: publish-npm-bootstrap
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-binaries:
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            build-name: cxpp-win32-x64
+            artifact-name: cxpp-win32-x64.exe
+          - os: macos-14
+            build-name: cxpp-darwin-arm64
+            artifact-name: cxpp-darwin-arm64
+          - os: macos-15-intel
+            build-name: cxpp-darwin-x64
+            artifact-name: cxpp-darwin-x64
+          - os: ubuntu-latest
+            build-name: cxpp-linux-x64
+            artifact-name: cxpp-linux-x64
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build standalone launcher
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pyinstaller .
+          python -c "from codex_plus_plus_launcher.upstream_release import write_latest_release_json; write_latest_release_json('.github/upstream-release.json')"
+          upstream_spec="$(python -c "import json; print(json.load(open('.github/upstream-release.json', encoding='utf-8'))['install_spec'])")"
+          python -m pip install "codex-session-delete @ ${upstream_spec}"
+          pyinstaller --onefile --collect-all codex_session_delete --add-data "codex_plus_plus_launcher/assets/codex-plus-plus.ico:codex_plus_plus_launcher/assets" --add-data ".github/upstream-release.json:codex_plus_plus_launcher" --name "${{ matrix.build-name }}" codex_plus_plus_launcher/__main__.py
+          mkdir -p artifact-bin
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            cp "dist/${{ matrix.build-name }}.exe" "artifact-bin/${{ matrix.artifact-name }}"
+          else
+            cp "dist/${{ matrix.build-name }}" "artifact-bin/${{ matrix.artifact-name }}"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact-name }}
+          path: artifact-bin/${{ matrix.artifact-name }}
+
+  publish-npm:
+    needs: build-binaries
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: cxpp-*
+          path: bin
+          merge-multiple: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Verify npm auth
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm whoami
+
+      - name: Publish npm package with bootstrap token
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        shell: bash
+        run: |
+          npm run prepack
+          name="$(node -p "require('./package.json').name")"
+          version="$(node -p "require('./package.json').version")"
+          if npm view "${name}@${version}" version >/dev/null 2>&1; then
+            echo "skip ${name}@${version}"
+            exit 0
+          fi
+          npm publish --access public
