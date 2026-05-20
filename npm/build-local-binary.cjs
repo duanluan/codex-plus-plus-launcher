@@ -9,11 +9,6 @@ function packageRoot() {
   return path.resolve(__dirname, '..');
 }
 
-function platformBinaryName(platform = process.platform, arch = process.arch) {
-  const extension = platform === 'win32' ? '.exe' : '';
-  return `cxpp-${platform}-${arch}${extension}`;
-}
-
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, { stdio: 'inherit', shell: false, ...options });
   if (result.status !== 0) {
@@ -21,60 +16,65 @@ function run(command, args, options = {}) {
   }
 }
 
+function platformKey(platform = process.platform, arch = process.arch) {
+  return `${platform}-${arch}`;
+}
+
+function buildTargetArgs(key) {
+  if (key === 'darwin-x64') {
+    return ['--target', 'x86_64-apple-darwin'];
+  }
+  if (key === 'darwin-arm64') {
+    return ['--target', 'aarch64-apple-darwin'];
+  }
+  return [];
+}
+
+function cargoTargetForKey(key) {
+  const args = buildTargetArgs(key);
+  return args.length ? args[1] : '';
+}
+
 function main() {
   const root = packageRoot();
-  const python = process.env.CODEXPP_BUILD_PYTHON || 'python';
-  const vendorDir = path.join(root, '.build-tools');
-  const distDir = path.join(root, 'dist');
-  const binDir = path.join(root, 'bin');
-  const binaryName = platformBinaryName();
-  const distBinary = path.join(distDir, binaryName);
-  const finalBinary = path.join(binDir, binaryName);
-  const releaseInfoPath = path.join(root, '.build-tools', 'upstream-release.json');
-  const iconData = `codex_plus_plus_launcher${path.sep}assets${path.sep}codex-plus-plus.ico${path.delimiter}codex_plus_plus_launcher${path.sep}assets`;
-  const upstreamReleaseData = `${releaseInfoPath}${path.delimiter}codex_plus_plus_launcher`;
+  const upstreamDir = process.env.CODEXPP_UPSTREAM_DIR || path.join(os.tmpdir(), 'CodexPlusPlus-upstream-build');
+  const ref = process.env.CODEXPP_UPSTREAM_REF || 'v1.1.3';
+  const key = process.env.CODEXPP_SIDECAR_PLATFORM || platformKey();
+  const outDir = path.join(root, 'upstream-bin', key);
 
-  fs.mkdirSync(vendorDir, { recursive: true });
-  fs.mkdirSync(binDir, { recursive: true });
-
-  run(python, ['-m', 'pip', 'install', '--target', vendorDir, 'pyinstaller'], { cwd: root });
-  run(python, ['-c', `from codex_plus_plus_launcher.upstream_release import write_latest_release_json; write_latest_release_json(r"${releaseInfoPath.replace(/\\/g, '\\\\')}")`], { cwd: root });
-  const releaseInfo = JSON.parse(fs.readFileSync(releaseInfoPath, 'utf8'));
-  if (!releaseInfo.install_spec) {
-    throw new Error('failed to resolve latest upstream release install spec');
+  if (!fs.existsSync(upstreamDir)) {
+    run('git', ['clone', '--depth', '1', '--branch', ref, 'https://github.com/BigPizzaV3/CodexPlusPlus.git', upstreamDir], { cwd: root });
+  } else {
+    run('git', ['fetch', '--depth', '1', 'origin', ref], { cwd: upstreamDir });
+    run('git', ['checkout', 'FETCH_HEAD'], { cwd: upstreamDir });
   }
-  run(python, ['-m', 'pip', 'install', '--target', vendorDir, releaseInfo.install_spec], { cwd: root });
 
-  const env = {
-    ...process.env,
-    PYTHONPATH: process.env.PYTHONPATH ? `${root}${path.delimiter}${vendorDir}${path.delimiter}${process.env.PYTHONPATH}` : `${root}${path.delimiter}${vendorDir}`,
-  };
+  run('npm', ['install', '--package-lock=false'], { cwd: path.join(upstreamDir, 'apps', 'codex-plus-manager'), shell: process.platform === 'win32' });
+  run('npm', ['run', 'vite:build'], { cwd: path.join(upstreamDir, 'apps', 'codex-plus-manager'), shell: process.platform === 'win32' });
+  run('cargo', ['build', '--release', ...buildTargetArgs(key)], { cwd: upstreamDir });
 
-  run(
-    python,
-    [
-      '-m',
-      'PyInstaller',
-      '--onefile',
-      '--collect-all',
-      'codex_session_delete',
-      '--add-data',
-      iconData,
-      '--add-data',
-      upstreamReleaseData,
-      '--name',
-      path.parse(binaryName).name,
-      'codex_plus_plus_launcher/__main__.py',
-    ],
-    { cwd: root, env },
+  const cargoTarget = cargoTargetForKey(key);
+  const targetDir = path.join(upstreamDir, 'target', ...(cargoTarget ? [cargoTarget] : []), 'release');
+  fs.mkdirSync(outDir, { recursive: true });
+  const exe = key.startsWith('win32') ? '.exe' : '';
+  fs.copyFileSync(path.join(targetDir, `codex-plus-plus${exe}`), path.join(outDir, `codex-plus-plus${exe}`));
+  fs.copyFileSync(path.join(targetDir, `codex-plus-plus-manager${exe}`), path.join(outDir, `codex-plus-plus-manager${exe}`));
+  const iconSource = key.startsWith('darwin')
+    ? path.join(upstreamDir, 'apps', 'codex-plus-manager', 'src-tauri', 'icons', 'icon.png')
+    : path.join(upstreamDir, 'apps', 'codex-plus-manager', 'src-tauri', 'icons', 'icon.ico');
+  fs.copyFileSync(iconSource, path.join(outDir, key.startsWith('darwin') ? 'codex-plus-plus.png' : 'codex-plus-plus.ico'));
+
+  const cargoToml = fs.readFileSync(path.join(upstreamDir, 'Cargo.toml'), 'utf8');
+  const versionMatch = cargoToml.match(/^\s*version\s*=\s*"([^"]+)"/m);
+  const version = versionMatch ? versionMatch[1] : JSON.parse(fs.readFileSync(path.join(upstreamDir, 'apps', 'codex-plus-manager', 'package.json'), 'utf8')).version;
+  const commit = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: upstreamDir, encoding: 'utf8' }).stdout.trim();
+  fs.mkdirSync(path.join(root, 'upstream-bin'), { recursive: true });
+  fs.writeFileSync(
+    path.join(root, 'upstream-bin', 'upstream-release.json'),
+    JSON.stringify({ version: `v${version}`, commit, repository: 'BigPizzaV3/CodexPlusPlus', ref }, null, 2) + '\n',
+    'utf8',
   );
-
-  if (!fs.existsSync(distBinary)) {
-    throw new Error(`PyInstaller did not produce expected binary: ${distBinary}`);
-  }
-
-  fs.copyFileSync(distBinary, finalBinary);
-  console.log(`built local binary: ${finalBinary}`);
+  console.log(`built upstream sidecars: ${outDir}`);
 }
 
 if (require.main === module) {
@@ -86,4 +86,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { main, platformBinaryName };
+module.exports = { buildTargetArgs, cargoTargetForKey, main, platformKey };

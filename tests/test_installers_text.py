@@ -15,7 +15,7 @@ def test_install_sh_mentions_force_reinstall_fallback():
 def test_npm_package_postinstall_is_explicitly_scoped():
     content = Path("package.json").read_text(encoding="utf-8")
 
-    assert '"build:binary-local": "node npm/build-local-binary.cjs"' in content
+    assert '"build:sidecars-local": "node npm/build-local-binary.cjs"' in content
     assert '"prepack": "node npm/verify-package.cjs"' in content
     assert '"postinstall": "node install-npm.cjs"' in content
     assert '"smoke:npm-local": "node npm/smoke-install.cjs"' in content
@@ -35,50 +35,56 @@ def test_npm_postinstall_uses_npm_specific_command():
 
     assert "npm-postinstall" in content
     assert "'setup'" not in content
-    assert "installGlobalBinary" in content
+    assert "runLauncher" in content
     assert "CODEXPP_NO_AUTO_INJECT" not in content
-    assert "CODEXPP_SHORTCUT_MODE" not in content
 
 
-def test_npm_launcher_defaults_to_bundled_binary():
+def test_npm_launcher_dispatches_to_bundled_sidecars():
     launcher = Path("npm/launcher.js").read_text(encoding="utf-8")
     cxpp = Path("npm/cxpp.js").read_text(encoding="utf-8")
 
-    assert "bin" in launcher
-    assert "platformBinaryName" in launcher
-    assert "installGlobalBinary" in launcher
-    assert "cxpp-native-" in launcher
-    assert "preferredBinaryPath" in launcher
-    assert "globalBinaryPath" in launcher
-    assert "CODEXPP_ALLOW_PYTHON_FALLBACK" in launcher
-    assert "CODEXPP_PYTHON" in launcher
-    assert "readdirSync" in launcher
+    assert "upstream-bin" in launcher
+    assert "codex-plus-plus-manager" in launcher
+    assert "SUPPORTED_PLATFORMS" in launcher
+    assert "installSidecars" in launcher
+    assert "installMacEntrypoints" in launcher
+    assert "installWindowsEntrypoints" in launcher
+    assert "spawnSidecar" in launcher
+    assert "install_mode=sidecar" in launcher
+    assert "install_mode=unsupported" in launcher
     assert "CODEXPP_LOCKED_OLD_BINARY" in launcher
     assert "findRunningProcessesForPath" in launcher
     assert "runLauncher" in cxpp
     assert "codex_plus_plus_launcher" not in cxpp
 
 
-def test_prepack_verifier_checks_platform_binary():
+def test_prepack_verifier_checks_sidecars():
     content = Path("npm/verify-package.cjs").read_text(encoding="utf-8")
 
-    assert "bin" in content
-    assert "cxpp-" in content
-    assert "missing required bundled binary" in content
+    assert "upstream-bin" in content
+    assert "codex-plus-plus-manager" in content
+    assert "win32-x64" in content
+    assert "darwin-x64" in content
+    assert "darwin-arm64" in content
+    assert "missing required bundled upstream sidecar" in content
     assert "missing required bundled icon asset" in content
 
 
-def test_local_binary_builder_uses_pyinstaller_and_upstream_bundle():
+def test_local_sidecar_builder_uses_upstream_rust_workspace():
     content = Path("npm/build-local-binary.cjs").read_text(encoding="utf-8")
 
-    assert "PyInstaller" in content
-    assert "write_latest_release_json" in content
-    assert "install_spec" in content
-    assert "--add-data" in content
+    assert "BigPizzaV3/CodexPlusPlus.git" in content
+    assert "CODEXPP_UPSTREAM_REF" in content
+    assert "CODEXPP_SIDECAR_PLATFORM" in content
+    assert "'install'" in content
+    assert "vite:build" in content
+    assert "cargo" in content
+    assert "build" in content
+    assert "codex-plus-plus-manager" in content
     assert "upstream-release.json" in content
     assert "codex-plus-plus.ico" in content
-    assert "codex_plus_plus_launcher" in content
-    assert "built local binary" in content
+    assert "codex-plus-plus.png" in content
+    assert "built upstream sidecars" in content
 
 
 def test_smoke_install_skips_real_shortcuts():
@@ -99,10 +105,10 @@ def test_smoke_install_uses_current_package_version_tarball():
 def test_package_exposes_only_explicit_commands():
     content = Path("package.json").read_text(encoding="utf-8")
 
-    assert '"version": "0.1.10"' in content
+    assert '"version": "0.1.11"' in content
     assert '"codex_plus_plus_launcher/*.py"' in content
     assert '"codex_plus_plus_launcher/assets/*"' in content
-    assert '"bin/*"' in content
+    assert '"upstream-bin/**"' in content
     assert '"cxpp": "npm/cxpp.js"' in content
     assert '"codexpp": "npm/cxpp.js"' in content
 
@@ -113,5 +119,9 @@ def test_readme_explains_wrapper_owns_upstream_updates():
 
     assert "更新这个 wrapper 包" in content
     assert "上游 GitHub Release" in content
+    assert "Codex++ 管理工具" in content
+    assert "Linux 暂不提供上游桌面 sidecar" in content
     assert "updating this wrapper package" in content_en
     assert "latest upstream GitHub Release" in content_en
+    assert "Codex++ Manager" in content_en
+    assert "Linux does not ship the upstream desktop sidecar" in content_en

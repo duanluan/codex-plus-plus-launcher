@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 const { t } = require('./i18n.js');
-const { installGlobalBinary, runLauncher } = require('./launcher.js');
+const { runLauncher } = require('./launcher.js');
 
 async function main() {
   if (process.env.CODEXPP_SKIP_NPM_POSTINSTALL === '1') {
@@ -11,14 +11,7 @@ async function main() {
   const args = ['npm-postinstall'];
 
   console.log(t('installingCodexPlusPlus'));
-  try {
-    await installGlobalBinary();
-  } catch (error) {
-    if (process.env.CODEXPP_ALLOW_PYTHON_FALLBACK !== '1' || error.code === 'CODEXPP_LOCKED_OLD_BINARY') {
-      throw error;
-    }
-  }
-  const result = runLauncher(args);
+  const result = await runLauncher(args);
   if (result.error) {
     throw result.error;
   }

@@ -1,13 +1,13 @@
 {
   "name": "@duanluan/codex-plus-plus-launcher",
-  "version": "0.1.10",
+  "version": "0.1.11",
   "description": "Install and launch Codex++ from npm",
   "bin": {
     "cxpp": "npm/cxpp.js",
     "codexpp": "npm/cxpp.js"
   },
   "scripts": {
-    "build:binary-local": "node npm/build-local-binary.cjs",
+    "build:sidecars-local": "node npm/build-local-binary.cjs",
     "prepack": "node npm/verify-package.cjs",
     "postinstall": "node install-npm.cjs",
     "smoke:npm-local": "node npm/smoke-install.cjs"
@@ -15,7 +15,7 @@
   "files": [
     "codex_plus_plus_launcher/*.py",
     "codex_plus_plus_launcher/assets/*",
-    "bin/*",
+    "upstream-bin/**",
     "install-npm.cjs",
     "npm/cxpp.js",
     "npm/i18n.js",

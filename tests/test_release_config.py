@@ -13,34 +13,47 @@ def test_readme_uses_registry_install_commands():
 def test_release_workflow_publishes_npm_only():
     content = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
 
-    assert "pyinstaller --onefile" in content
-    assert "--collect-all codex_session_delete" in content
-    assert '--add-data "codex_plus_plus_launcher/assets/codex-plus-plus.ico:codex_plus_plus_launcher/assets"' in content
-    assert '--add-data ".github/upstream-release.json:codex_plus_plus_launcher"' in content
+    assert "build-sidecars" in content
+    assert "windows-latest" in content
+    assert "macos-14" in content
+    assert "macos-15-intel" in content
     assert "write_latest_release_json" in content
-    assert "install_spec" in content
-    assert "codex_plus_plus_launcher/__main__.py" in content
+    assert "BigPizzaV3/CodexPlusPlus.git" in content
+    assert "upstream/apps/codex-plus-manager" in content
+    assert "npm install --package-lock=false" in content
+    assert "npm run vite:build" in content
+    assert "cargo build --release" in content
+    assert "codex-plus-plus-manager" in content
+    assert "if: matrix.rust-targets == ''" in content
+    assert "if: matrix.rust-targets != ''" in content
+    assert 'shell: bash\n        run: git clone --depth 1 --branch "${CODEXPP_UPSTREAM_REF}"' in content
     assert "actions/download-artifact@v4" in content
-    assert "path: bin" in content
+    assert "path: upstream-bin" in content
     assert "npm publish --access public" in content
     assert "secrets.NPM_TOKEN" in content
     assert 'tags:\n      - "v*"' in content
+    assert "python - <<'PY'" in content
+    assert "CODEXPP_UPSTREAM_COMMIT" in content
 
 
 def test_manual_npm_publish_workflow_exists():
     content = Path(".github/workflows/publish-npm-bootstrap.yml").read_text(encoding="utf-8")
 
     assert "workflow_dispatch" in content
-    assert "pyinstaller --onefile" in content
-    assert "--collect-all codex_session_delete" in content
-    assert '--add-data "codex_plus_plus_launcher/assets/codex-plus-plus.ico:codex_plus_plus_launcher/assets"' in content
-    assert '--add-data ".github/upstream-release.json:codex_plus_plus_launcher"' in content
+    assert "build-sidecars" in content
     assert "write_latest_release_json" in content
-    assert "install_spec" in content
+    assert "BigPizzaV3/CodexPlusPlus.git" in content
+    assert "upstream/apps/codex-plus-manager" in content
+    assert "cargo build --release" in content
+    assert "codex-plus-plus-manager" in content
+    assert "if: matrix.rust-targets == ''" in content
+    assert "if: matrix.rust-targets != ''" in content
+    assert 'shell: bash\n        run: git clone --depth 1 --branch "${CODEXPP_UPSTREAM_REF}"' in content
     assert "actions/download-artifact@v4" in content
     assert "npm whoami" in content
     assert "npm publish --access public" in content
     assert "secrets.NPM_TOKEN" in content
+    assert "path: upstream-bin" in content
 
 
 def test_sync_upstream_workflow_exists():

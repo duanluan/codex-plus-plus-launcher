@@ -7,56 +7,118 @@ permissions:
   contents: read
 
 jobs:
-  build-binaries:
+  build-sidecars:
     strategy:
       matrix:
         include:
           - os: windows-latest
-            build-name: cxpp-win32-x64
-            artifact-name: cxpp-win32-x64.exe
+            platform-key: win32-x64
+            cargo-target: ""
+            rust-targets: ""
+            exe: ".exe"
+            icon-name: codex-plus-plus.ico
+            icon-source: apps/codex-plus-manager/src-tauri/icons/icon.ico
           - os: macos-14
-            build-name: cxpp-darwin-arm64
-            artifact-name: cxpp-darwin-arm64
+            platform-key: darwin-arm64
+            cargo-target: aarch64-apple-darwin
+            rust-targets: aarch64-apple-darwin
+            exe: ""
+            icon-name: codex-plus-plus.png
+            icon-source: apps/codex-plus-manager/src-tauri/icons/icon.png
           - os: macos-15-intel
-            build-name: cxpp-darwin-x64
-            artifact-name: cxpp-darwin-x64
-          - os: ubuntu-latest
-            build-name: cxpp-linux-x64
-            artifact-name: cxpp-linux-x64
+            platform-key: darwin-x64
+            cargo-target: x86_64-apple-darwin
+            rust-targets: x86_64-apple-darwin
+            exe: ""
+            icon-name: codex-plus-plus.png
+            icon-source: apps/codex-plus-manager/src-tauri/icons/icon.png
     runs-on: ${{ matrix.os }}
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout wrapper
+        uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      - name: Build standalone launcher
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - uses: dtolnay/rust-toolchain@stable
+        if: matrix.rust-targets == ''
+
+      - uses: dtolnay/rust-toolchain@stable
+        if: matrix.rust-targets != ''
+        with:
+          targets: ${{ matrix.rust-targets }}
+
+      - name: Resolve upstream release
         shell: bash
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install pyinstaller .
-          python -c "from codex_plus_plus_launcher.upstream_release import write_latest_release_json; write_latest_release_json('.github/upstream-release.json')"
-          upstream_spec="$(python -c "import json; print(json.load(open('.github/upstream-release.json', encoding='utf-8'))['install_spec'])")"
-          python -m pip install "codex-session-delete @ ${upstream_spec}"
-          pyinstaller --onefile --collect-all codex_session_delete --add-data "codex_plus_plus_launcher/assets/codex-plus-plus.ico:codex_plus_plus_launcher/assets" --add-data ".github/upstream-release.json:codex_plus_plus_launcher" --name "${{ matrix.build-name }}" codex_plus_plus_launcher/__main__.py
-          mkdir -p artifact-bin
-          if [ "${{ runner.os }}" = "Windows" ]; then
-            cp "dist/${{ matrix.build-name }}.exe" "artifact-bin/${{ matrix.artifact-name }}"
+          mkdir -p upstream-bin
+          python -c "from codex_plus_plus_launcher.upstream_release import write_latest_release_json; write_latest_release_json('upstream-bin/upstream-release.json')"
+          python - <<'PY' >> "$GITHUB_ENV"
+          import json
+          payload = json.load(open("upstream-bin/upstream-release.json", encoding="utf-8"))
+          print(f"CODEXPP_UPSTREAM_REF={payload['version']}")
+          PY
+
+      - name: Checkout upstream Codex++
+        shell: bash
+        run: git clone --depth 1 --branch "${CODEXPP_UPSTREAM_REF}" https://github.com/BigPizzaV3/CodexPlusPlus.git upstream
+
+      - name: Build upstream frontend
+        working-directory: upstream/apps/codex-plus-manager
+        run: |
+          npm install --package-lock=false
+          npm run vite:build
+
+      - name: Build upstream binaries
+        shell: bash
+        working-directory: upstream
+        run: |
+          if [ -n "${{ matrix.cargo-target }}" ]; then
+            cargo build --release --target "${{ matrix.cargo-target }}"
           else
-            cp "dist/${{ matrix.build-name }}" "artifact-bin/${{ matrix.artifact-name }}"
+            cargo build --release
           fi
+
+      - name: Stage sidecars
+        shell: bash
+        run: |
+          mkdir -p "artifact/upstream-bin/${{ matrix.platform-key }}"
+          if [ -n "${{ matrix.cargo-target }}" ]; then
+            binary_dir="upstream/target/${{ matrix.cargo-target }}/release"
+          else
+            binary_dir="upstream/target/release"
+          fi
+          cp "${binary_dir}/codex-plus-plus${{ matrix.exe }}" "artifact/upstream-bin/${{ matrix.platform-key }}/codex-plus-plus${{ matrix.exe }}"
+          cp "${binary_dir}/codex-plus-plus-manager${{ matrix.exe }}" "artifact/upstream-bin/${{ matrix.platform-key }}/codex-plus-plus-manager${{ matrix.exe }}"
+          cp "upstream/${{ matrix.icon-source }}" "artifact/upstream-bin/${{ matrix.platform-key }}/${{ matrix.icon-name }}"
+          cp "upstream-bin/upstream-release.json" "artifact/upstream-bin/upstream-release.json"
+          upstream_commit="$(git -C upstream rev-parse HEAD)"
+          CODEXPP_UPSTREAM_COMMIT="${upstream_commit}" python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          path = Path("artifact/upstream-bin/upstream-release.json")
+          payload = json.loads(path.read_text(encoding="utf-8"))
+          payload["commit"] = os.environ["CODEXPP_UPSTREAM_COMMIT"]
+          payload["repository"] = "BigPizzaV3/CodexPlusPlus"
+          path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+          PY
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact-name }}
-          path: artifact-bin/${{ matrix.artifact-name }}
+          name: upstream-bin-${{ matrix.platform-key }}
+          path: artifact/upstream-bin
 
   publish-npm:
-    needs: build-binaries
+    needs: build-sidecars
     runs-on: ubuntu-latest
 
     steps:
@@ -64,8 +126,8 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          pattern: cxpp-*
-          path: bin
+          pattern: upstream-bin-*
+          path: upstream-bin
           merge-multiple: true
 
       - uses: actions/setup-node@v4
