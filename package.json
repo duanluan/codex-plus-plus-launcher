@@ -1,6 +1,6 @@
 {
   "name": "@duanluan/codex-plus-plus-launcher",
-  "version": "0.1.11",
+  "version": "0.1.12",
   "description": "Install and launch Codex++ from npm",
   "bin": {
     "cxpp": "npm/cxpp.js",

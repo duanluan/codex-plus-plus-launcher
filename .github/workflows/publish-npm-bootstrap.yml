@@ -32,6 +32,13 @@ jobs:
             exe: ""
             icon-name: codex-plus-plus.png
             icon-source: apps/codex-plus-manager/src-tauri/icons/icon.png
+          - os: ubuntu-latest
+            platform-key: linux-x64
+            cargo-target: ""
+            rust-targets: ""
+            exe: ""
+            icon-name: ""
+            icon-source: ""
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -72,6 +79,7 @@ jobs:
         run: git clone --depth 1 --branch "${CODEXPP_UPSTREAM_REF}" https://github.com/BigPizzaV3/CodexPlusPlus.git upstream
 
       - name: Build upstream frontend
+        if: matrix.platform-key != 'linux-x64'
         working-directory: upstream/apps/codex-plus-manager
         run: |
           npm install --package-lock=false
@@ -81,10 +89,14 @@ jobs:
         shell: bash
         working-directory: upstream
         run: |
+          package_args=()
+          if [ "${{ matrix.platform-key }}" = "linux-x64" ]; then
+            package_args=(-p codex-plus-launcher)
+          fi
           if [ -n "${{ matrix.cargo-target }}" ]; then
-            cargo build --release --target "${{ matrix.cargo-target }}"
+            cargo build --release --target "${{ matrix.cargo-target }}" "${package_args[@]}"
           else
-            cargo build --release
+            cargo build --release "${package_args[@]}"
           fi
 
       - name: Stage sidecars
@@ -97,8 +109,10 @@ jobs:
             binary_dir="upstream/target/release"
           fi
           cp "${binary_dir}/codex-plus-plus${{ matrix.exe }}" "artifact/upstream-bin/${{ matrix.platform-key }}/codex-plus-plus${{ matrix.exe }}"
-          cp "${binary_dir}/codex-plus-plus-manager${{ matrix.exe }}" "artifact/upstream-bin/${{ matrix.platform-key }}/codex-plus-plus-manager${{ matrix.exe }}"
-          cp "upstream/${{ matrix.icon-source }}" "artifact/upstream-bin/${{ matrix.platform-key }}/${{ matrix.icon-name }}"
+          if [ "${{ matrix.platform-key }}" != "linux-x64" ]; then
+            cp "${binary_dir}/codex-plus-plus-manager${{ matrix.exe }}" "artifact/upstream-bin/${{ matrix.platform-key }}/codex-plus-plus-manager${{ matrix.exe }}"
+            cp "upstream/${{ matrix.icon-source }}" "artifact/upstream-bin/${{ matrix.platform-key }}/${{ matrix.icon-name }}"
+          fi
           cp "upstream-bin/upstream-release.json" "artifact/upstream-bin/upstream-release.json"
           upstream_commit="$(git -C upstream rev-parse HEAD)"
           CODEXPP_UPSTREAM_COMMIT="${upstream_commit}" python - <<'PY'

@@ -17,12 +17,15 @@ def test_release_workflow_publishes_npm_only():
     assert "windows-latest" in content
     assert "macos-14" in content
     assert "macos-15-intel" in content
+    assert "ubuntu-latest" in content
+    assert "linux-x64" in content
     assert "write_latest_release_json" in content
     assert "BigPizzaV3/CodexPlusPlus.git" in content
     assert "upstream/apps/codex-plus-manager" in content
     assert "npm install --package-lock=false" in content
     assert "npm run vite:build" in content
     assert "cargo build --release" in content
+    assert "-p codex-plus-launcher" in content
     assert "codex-plus-plus-manager" in content
     assert "if: matrix.rust-targets == ''" in content
     assert "if: matrix.rust-targets != ''" in content
@@ -41,10 +44,13 @@ def test_manual_npm_publish_workflow_exists():
 
     assert "workflow_dispatch" in content
     assert "build-sidecars" in content
+    assert "ubuntu-latest" in content
+    assert "linux-x64" in content
     assert "write_latest_release_json" in content
     assert "BigPizzaV3/CodexPlusPlus.git" in content
     assert "upstream/apps/codex-plus-manager" in content
     assert "cargo build --release" in content
+    assert "-p codex-plus-launcher" in content
     assert "codex-plus-plus-manager" in content
     assert "if: matrix.rust-targets == ''" in content
     assert "if: matrix.rust-targets != ''" in content

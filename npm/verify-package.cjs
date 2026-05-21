@@ -7,6 +7,7 @@ const REQUIRED_PLATFORMS = {
   'win32-x64': ['codex-plus-plus.exe', 'codex-plus-plus-manager.exe'],
   'darwin-x64': ['codex-plus-plus', 'codex-plus-plus-manager'],
   'darwin-arm64': ['codex-plus-plus', 'codex-plus-plus-manager'],
+  'linux-x64': ['codex-plus-plus'],
 };
 
 const REQUIRED_ICONS = {

@@ -5,11 +5,14 @@ const readline = require('node:readline');
 const { spawn, spawnSync } = require('node:child_process');
 const { t } = require('./i18n.js');
 
-const SUPPORTED_PLATFORMS = new Set(['win32-x64', 'darwin-x64', 'darwin-arm64']);
+const SUPPORTED_PLATFORMS = new Set(['win32-x64', 'darwin-x64', 'darwin-arm64', 'linux-x64']);
 const SILENT_BINARY = 'codex-plus-plus';
 const MANAGER_BINARY = 'codex-plus-plus-manager';
 const SILENT_NAME = 'Codex++';
 const MANAGER_NAME = 'Codex++ 管理工具';
+const LINUX_SHIM_DIR_NAME = 'codex-desktop-linux-shim';
+const LINUX_SHIM_BINARY = 'codex.exe';
+const LINUX_DESKTOP_ENTRY = 'codex-plus-plus.desktop';
 
 function optionValue(options, key, fallback) {
   const value = options[key];
@@ -37,6 +40,15 @@ function platformKey(platform = process.platform, arch = process.arch) {
 
 function executableName(name, platform = process.platform) {
   return platform === 'win32' ? `${name}.exe` : name;
+}
+
+function requiredSidecarKinds(options = {}) {
+  const platform = optionValue(options, 'platform', process.platform);
+  return platform === 'linux' ? ['silent'] : ['silent', 'manager'];
+}
+
+function sidecarKindSupported(kind, options = {}) {
+  return requiredSidecarKinds(options).includes(kind);
 }
 
 function upstreamBinDir(options = {}) {
@@ -107,7 +119,7 @@ function assertSupportedPlatform(options = {}) {
 function assertBundledSidecars(options = {}) {
   const fsImpl = options.fs || fs;
   assertSupportedPlatform(options);
-  const missing = [bundledSidecarPath('silent', options), bundledSidecarPath('manager', options)].filter((candidate) => !fsImpl.existsSync(candidate));
+  const missing = requiredSidecarKinds(options).map((kind) => bundledSidecarPath(kind, options)).filter((candidate) => !fsImpl.existsSync(candidate));
   if (missing.length > 0) {
     const error = new Error(`${t('missingSidecar', options.env || process.env)}: ${missing.join(', ')}`);
     error.code = 'CODEXPP_MISSING_SIDECAR';
@@ -136,6 +148,16 @@ function fallbackMacInstallRoot(options = {}) {
   return optionValue(options, 'fallbackInstallRoot', () => path.join(optionValue(options, 'homeDir', () => os.homedir()), 'Applications'));
 }
 
+function xdgDataHome(options = {}) {
+  const env = options.env || process.env;
+  return env.XDG_DATA_HOME || path.join(optionValue(options, 'homeDir', () => os.homedir()), '.local', 'share');
+}
+
+function xdgStateHome(options = {}) {
+  const env = options.env || process.env;
+  return env.XDG_STATE_HOME || path.join(optionValue(options, 'homeDir', () => os.homedir()), '.local', 'state');
+}
+
 function installedSidecarPath(kind, options = {}) {
   const platform = optionValue(options, 'platform', process.platform);
   const root = optionValue(options, 'installRoot', () => detectedInstallRoot(options));
@@ -160,6 +182,18 @@ function detectedInstallRoot(options = {}) {
     return fallback;
   }
   return requested;
+}
+
+function linuxShimRoot(options = {}) {
+  return optionValue(options, 'linuxShimRoot', () => path.join(xdgDataHome(options), 'Codex++', LINUX_SHIM_DIR_NAME));
+}
+
+function linuxEntrypointPath(options = {}) {
+  return optionValue(options, 'linuxEntrypointPath', () => path.join(xdgDataHome(options), 'applications', LINUX_DESKTOP_ENTRY));
+}
+
+function linuxInstallStatePath(options = {}) {
+  return optionValue(options, 'linuxInstallStatePath', () => path.join(xdgStateHome(options), 'codex-plus-plus-launcher', 'linux-install.json'));
 }
 
 function isPermissionError(error) {
@@ -425,7 +459,7 @@ async function installSidecars(options = {}) {
   const installRoot = installSidecarRoot(options);
   fsImpl.mkdirSync(installRoot, { recursive: true });
   const installed = {};
-  for (const kind of ['silent', 'manager']) {
+  for (const kind of requiredSidecarKinds(options)) {
     const source = bundledSidecarPath(kind, options);
     const target = installedSidecarPath(kind, { ...options, installRoot });
     await copyReplacingChangedFile(source, target, { ...options, target });
@@ -439,6 +473,293 @@ async function installSidecars(options = {}) {
   }
   installed.installRoot = installRoot;
   return installed;
+}
+
+function normalizeExecutablePath(candidate) {
+  return path.resolve(String(candidate || ''));
+}
+
+function linuxStartScriptFromBinary(binaryPath, options = {}) {
+  const fsImpl = options.fs || fs;
+  const normalized = normalizeExecutablePath(binaryPath);
+  const basename = path.basename(normalized);
+  const parent = path.dirname(normalized);
+  const candidates = [];
+
+  if (basename === 'start.sh') {
+    candidates.push(normalized);
+  }
+  candidates.push(path.join(parent, 'start.sh'));
+  if (basename === 'codex-desktop') {
+    candidates.push('/opt/codex-desktop/start.sh');
+    candidates.push(path.join(parent, '..', 'opt', 'codex-desktop', 'start.sh'));
+    candidates.push(path.join(parent, '..', 'opt', 'codex-desktop-linux', 'lib', 'codex-desktop-linux', 'codex-app', 'start.sh'));
+  }
+  if (normalized.includes(`${path.sep}codex-desktop-linux${path.sep}`) || normalized.includes('/codex-desktop-linux/')) {
+    candidates.push(path.join(parent, '..', 'lib', 'codex-desktop-linux', 'codex-app', 'start.sh'));
+    candidates.push(path.join(parent, '..', 'codex-app', 'start.sh'));
+  }
+
+  for (const candidate of candidates) {
+    const resolved = path.resolve(candidate);
+    if (fsImpl.existsSync(resolved)) {
+      return resolved;
+    }
+  }
+  return null;
+}
+
+function linuxStartScriptCandidates(options = {}) {
+  const env = options.env || process.env;
+  const homeDir = optionValue(options, 'homeDir', () => os.homedir());
+  const candidates = [];
+  for (const value of [env.CODEXPP_LINUX_CODEX_START, env.CODEX_DESKTOP_LINUX_START, env.CODEX_DESKTOP_START]) {
+    if (value) {
+      candidates.push(value);
+    }
+  }
+  for (const value of [env.CODEXPP_LINUX_APPDIR, env.CODEX_DESKTOP_LINUX_APPDIR, env.APPDIR]) {
+    if (value) {
+      candidates.push(path.join(value, 'opt', 'codex-desktop', 'start.sh'));
+    }
+  }
+  for (const value of [env.CODEXPP_LINUX_CODEX_BIN, env.CODEX_DESKTOP_LINUX_BIN]) {
+    if (value) {
+      const start = linuxStartScriptFromBinary(value, options);
+      if (start) {
+        candidates.push(start);
+      }
+    }
+  }
+  const which = options.which || ((name) => {
+    const result = (options.spawnSync || spawnSync)('which', [name], { encoding: 'utf8' });
+    return result.status === 0 ? String(result.stdout || '').trim().split(/\r?\n/)[0] : '';
+  });
+  for (const name of ['codex-desktop', 'openai-codex-desktop']) {
+    try {
+      const found = which(name);
+      if (found) {
+        const start = linuxStartScriptFromBinary(found, options);
+        if (start) {
+          candidates.push(start);
+        }
+      }
+    } catch (_error) {}
+  }
+  candidates.push('/opt/codex-desktop/start.sh');
+  candidates.push(path.join(homeDir, '.local', 'opt', 'codex-desktop-linux', 'lib', 'codex-desktop-linux', 'codex-app', 'start.sh'));
+  candidates.push(path.join(homeDir, 'codex-desktop-linux', 'codex-app', 'start.sh'));
+
+  const unique = [];
+  const seen = new Set();
+  for (const candidate of candidates) {
+    if (!candidate) {
+      continue;
+    }
+    const resolved = path.resolve(candidate);
+    if (!seen.has(resolved)) {
+      seen.add(resolved);
+      unique.push(resolved);
+    }
+  }
+  return unique;
+}
+
+function detectLinuxCodexDesktop(options = {}) {
+  const fsImpl = options.fs || fs;
+  for (const startScript of linuxStartScriptCandidates(options)) {
+    if (fsImpl.existsSync(startScript)) {
+      const appRoot = path.dirname(startScript);
+      return {
+        kind: 'codex-desktop-linux',
+        startScript,
+        appRoot,
+        resourcesDir: path.join(appRoot, 'resources'),
+      };
+    }
+  }
+  return null;
+}
+
+function shellSingleQuote(value) {
+  return `'${String(value).replace(/'/g, "'\\''")}'`;
+}
+
+function linuxCodexShimScript(startScript) {
+  return [
+    '#!/usr/bin/env bash',
+    'set -euo pipefail',
+    `exec ${shellSingleQuote(startScript)} -- "$@"`,
+    '',
+  ].join('\n');
+}
+
+function writeLinuxCodexShim(installation, options = {}) {
+  const fsImpl = options.fs || fs;
+  const shimRoot = linuxShimRoot(options);
+  fsImpl.mkdirSync(shimRoot, { recursive: true });
+  const shimPath = path.join(shimRoot, LINUX_SHIM_BINARY);
+  fsImpl.writeFileSync(shimPath, linuxCodexShimScript(installation.startScript), 'utf8');
+  fsImpl.chmodSync(shimPath, 0o755);
+  return { shimRoot, shimPath };
+}
+
+function linuxDesktopEntry({ name, execPath, iconPath, comment }) {
+  const iconLine = iconPath ? `Icon=${iconPath}\n` : '';
+  return `[Desktop Entry]
+Name=${name}
+Comment=${comment}
+Exec=${execPath}
+${iconLine}Terminal=false
+Type=Application
+Categories=Development;
+StartupNotify=true
+`;
+}
+
+function installLinuxEntrypoints(installed, options = {}) {
+  const fsImpl = options.fs || fs;
+  const desktopPath = linuxEntrypointPath(options);
+  fsImpl.mkdirSync(path.dirname(desktopPath), { recursive: true });
+  const command = `${desktopExecArg(installed.silent)} --app-path ${desktopExecArg(installed.linuxShimRoot)}`;
+  fsImpl.writeFileSync(
+    desktopPath,
+    linuxDesktopEntry({
+      name: SILENT_NAME,
+      execPath: command,
+      iconPath: installed.icon || '',
+      comment: 'Launch Codex++ with Codex Desktop for Linux',
+    }),
+    'utf8',
+  );
+  return {
+    silent: desktopPath,
+    manager: 'unsupported',
+  };
+}
+
+function desktopExecArg(value) {
+  const raw = String(value);
+  if (/^[A-Za-z0-9_/:=.,@%+-]+$/.test(raw)) {
+    return raw.replace(/%/g, '%%');
+  }
+  return `"${raw.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/`/g, '\\`').replace(/\$/g, '\\$').replace(/%/g, '%%')}"`;
+}
+
+function linuxShellArg(value) {
+  const raw = String(value);
+  if (/^[A-Za-z0-9_/:=.,@%+-]+$/.test(raw)) {
+    return raw;
+  }
+  return shellSingleQuote(raw);
+}
+
+function linuxHasExplicitAppPath(args) {
+  for (let index = 0; index < args.length; index += 1) {
+    if (args[index] === '--app-path' && args[index + 1]) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function linuxShimPathFromRoot(root) {
+  return path.join(root, LINUX_SHIM_BINARY);
+}
+
+function linuxStateShimRoots(state) {
+  const roots = [];
+  if (state && state.codex_shim_root) {
+    roots.push(state.codex_shim_root);
+  }
+  if (state && state.codex_shim) {
+    roots.push(path.dirname(state.codex_shim));
+  }
+  return roots;
+}
+
+function ensureLinuxCodexShimRoot(options = {}) {
+  const fsImpl = options.fs || fs;
+  const state = readJsonFile(linuxInstallStatePath(options), fsImpl) || {};
+  const roots = [...linuxStateShimRoots(state), linuxShimRoot(options)];
+  const seen = new Set();
+  for (const root of roots) {
+    if (!root || seen.has(root)) {
+      continue;
+    }
+    seen.add(root);
+    if (fsImpl.existsSync(linuxShimPathFromRoot(root))) {
+      return root;
+    }
+  }
+
+  const installation = detectLinuxCodexDesktop(options);
+  if (!installation) {
+    return null;
+  }
+  const shim = writeLinuxCodexShim(installation, options);
+  const installedSilent = installedSidecarPath('silent', options);
+  const silent = fsImpl.existsSync(installedSilent) ? installedSilent : bundledSidecarPath('silent', options);
+  writeLinuxInstallState(
+    {
+      silent,
+      installRoot: path.dirname(silent),
+      linuxShim: shim.shimPath,
+      linuxShimRoot: shim.shimRoot,
+    },
+    installation,
+    options,
+  );
+  return shim.shimRoot;
+}
+
+function linuxSilentLaunchArgs(args, options = {}) {
+  if (linuxHasExplicitAppPath(args)) {
+    return args;
+  }
+  const shimRoot = ensureLinuxCodexShimRoot(options);
+  if (!shimRoot) {
+    const error = new Error(t('missingLinuxCodexDesktop', options.env || process.env));
+    error.code = 'CODEXPP_MISSING_LINUX_CODEX_DESKTOP';
+    throw error;
+  }
+  return ['--app-path', shimRoot, ...args];
+}
+
+function writeLinuxInstallState(installed, installation, options = {}) {
+  const fsImpl = options.fs || fs;
+  const statePath = linuxInstallStatePath(options);
+  fsImpl.mkdirSync(path.dirname(statePath), { recursive: true });
+  const payload = {
+    mode: 'codex_desktop_linux',
+    app_integration_state: 'installed',
+    codex_desktop_linux_start: installation.startScript,
+    codex_desktop_linux_app_root: installation.appRoot,
+    codex_shim: installed.linuxShim,
+    codex_shim_root: installed.linuxShimRoot,
+    silent_binary: installed.silent,
+    upstream_version: bundledUpstreamVersion(options) || null,
+    installed_at: new Date().toISOString(),
+  };
+  fsImpl.writeFileSync(statePath, JSON.stringify(payload, null, 2) + '\n', 'utf8');
+  return statePath;
+}
+
+async function installLinuxApp(options = {}) {
+  const installation = detectLinuxCodexDesktop(options);
+  if (!installation) {
+    const error = new Error(t('missingLinuxCodexDesktop', options.env || process.env));
+    error.code = 'CODEXPP_MISSING_LINUX_CODEX_DESKTOP';
+    throw error;
+  }
+  const installed = await installSidecars(options);
+  const shim = writeLinuxCodexShim(installation, options);
+  installed.linuxShim = shim.shimPath;
+  installed.linuxShimRoot = shim.shimRoot;
+  installed.linuxCodexStart = installation.startScript;
+  const entrypoints = await installEntrypoints(installed, { ...options, installRoot: installed.installRoot });
+  const statePath = writeLinuxInstallState(installed, installation, options);
+  return { installed, entrypoints, linux: installation, statePath };
 }
 
 function installSidecarRoot(options = {}) {
@@ -606,10 +927,17 @@ async function installEntrypoints(installed, options = {}) {
   if (platform === 'darwin') {
     return installMacEntrypoints(installed, options);
   }
+  if (platform === 'linux') {
+    return installLinuxEntrypoints(installed, options);
+  }
   return { unsupported: true };
 }
 
 async function installApp(options = {}) {
+  const platform = optionValue(options, 'platform', process.platform);
+  if (platform === 'linux') {
+    return installLinuxApp(options);
+  }
   const installed = await installSidecars(options);
   const entrypoints = await installEntrypoints(installed, { ...options, installRoot: installed.installRoot });
   return { installed, entrypoints };
@@ -641,6 +969,15 @@ function inspectEntrypoints(options = {}) {
       manager_path: fsImpl.existsSync(managerPrimary) ? managerPrimary : managerFallback,
     };
   }
+  if (platform === 'linux') {
+    const desktopPath = linuxEntrypointPath(options);
+    return {
+      silent: fsImpl.existsSync(desktopPath) ? 'installed' : 'missing',
+      manager: 'unsupported',
+      silent_path: desktopPath,
+      manager_path: '',
+    };
+  }
   return { silent: 'unsupported', manager: 'unsupported' };
 }
 
@@ -648,11 +985,12 @@ function installedSidecars(options = {}) {
   const fsImpl = options.fs || fs;
   const silent = installedSidecarPath('silent', options);
   const manager = installedSidecarPath('manager', options);
+  const managerSupported = sidecarKindSupported('manager', options);
   return {
     silent,
     manager,
     silent_state: fsImpl.existsSync(silent) ? 'installed' : 'missing',
-    manager_state: fsImpl.existsSync(manager) ? 'installed' : 'missing',
+    manager_state: managerSupported ? (fsImpl.existsSync(manager) ? 'installed' : 'missing') : 'unsupported',
   };
 }
 
@@ -663,7 +1001,7 @@ function doctorReport(options = {}) {
   const sidecars = installedSidecars(options);
   const entrypoints = inspectEntrypoints(options);
   const supported = SUPPORTED_PLATFORMS.has(platformKey(platform, arch));
-  return {
+  const report = {
     platform,
     arch,
     supported: supported ? 'yes' : 'no',
@@ -681,6 +1019,16 @@ function doctorReport(options = {}) {
     silent_entrypoint: entrypoints.silent_path || '',
     manager_entrypoint: entrypoints.manager_path || '',
   };
+  if (platform === 'linux') {
+    const linux = detectLinuxCodexDesktop(options);
+    const state = readJsonFile(linuxInstallStatePath(options), options.fs || fs) || {};
+    report.linux_codex_desktop_state = linux ? 'found' : 'missing';
+    report.linux_codex_desktop_start = (linux && linux.startScript) || state.codex_desktop_linux_start || '';
+    report.linux_codex_shim = state.codex_shim || path.join(linuxShimRoot(options), LINUX_SHIM_BINARY);
+    report.linux_codex_shim_state = (options.fs || fs).existsSync(report.linux_codex_shim) ? 'installed' : 'missing';
+    report.install_mode = state.mode || (linux ? 'codex_desktop_linux' : 'unsupported');
+  }
+  return report;
 }
 
 function printDoctor(jsonMode, options = {}) {
@@ -698,6 +1046,16 @@ function printDoctor(jsonMode, options = {}) {
 function spawnSidecar(kind, args = [], options = {}) {
   assertSupportedPlatform(options);
   const platform = optionValue(options, 'platform', process.platform);
+  if (platform === 'linux' && kind === 'manager') {
+    return { status: 1, error: new Error(t('unsupportedLinuxManager', options.env || process.env)) };
+  }
+  if (platform === 'linux' && kind === 'silent') {
+    try {
+      args = linuxSilentLaunchArgs(args, options);
+    } catch (error) {
+      return { status: 1, error };
+    }
+  }
   const cwd = options.cwd || os.homedir();
   const installed = installedSidecarPath(kind, options);
   const bundled = bundledSidecarPath(kind, options);
@@ -785,12 +1143,26 @@ async function runLauncher(args = [], options = {}) {
       }
       return { status: 1, error: new Error(message) };
     }
-    const result = await installApp(options);
+    let result;
+    try {
+      result = await installApp(options);
+    } catch (error) {
+      if (command === 'npm-postinstall' && error && error.code === 'CODEXPP_MISSING_LINUX_CODEX_DESKTOP') {
+        console.log(`install_mode=unsupported`);
+        console.log(`message=${error.message || String(error)}`);
+        return { status: 0 };
+      }
+      throw error;
+    }
     console.log(`install_mode=sidecar`);
     console.log(`upstream_version=${bundledUpstreamVersion(options) || 'missing'}`);
     console.log(`install_root=${result.installed.installRoot}`);
     console.log(`silent_binary=${result.installed.silent}`);
-    console.log(`manager_binary=${result.installed.manager}`);
+    console.log(`manager_binary=${result.installed.manager || 'unsupported'}`);
+    if (result.installed.linuxShim) {
+      console.log(`linux_codex_shim=${result.installed.linuxShim}`);
+      console.log(`linux_codex_desktop_start=${result.installed.linuxCodexStart}`);
+    }
     console.log(`entrypoints=${result.entrypoints.skipped ? 'skipped' : 'installed'}`);
     return { status: 0 };
   }

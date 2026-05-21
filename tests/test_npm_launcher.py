@@ -36,7 +36,7 @@ def test_dispatcher_launch_manager_doctor_and_install_app():
 
         const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cxpp-package-'));
         const installRoot = path.join(root, 'install');
-        fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ version: '0.1.11' }));
+        fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ version: '0.1.12' }));
         fs.mkdirSync(path.join(root, 'upstream-bin', 'win32-x64'), { recursive: true });
         fs.writeFileSync(path.join(root, 'upstream-bin', 'upstream-release.json'), JSON.stringify({ version: 'v1.1.3', commit: '84c3e597' }));
         fs.writeFileSync(path.join(root, 'upstream-bin', 'win32-x64', 'codex-plus-plus.exe'), 'silent-v1');
@@ -77,7 +77,7 @@ def test_dispatcher_launch_manager_doctor_and_install_app():
           assert.equal(spawned.at(-1).command, path.join(installRoot, 'codex-plus-plus-manager.exe'));
 
           const report = launcher.doctorReport(options);
-          assert.equal(report.package_version, '0.1.11');
+          assert.equal(report.package_version, '0.1.12');
           assert.equal(report.upstream_version, 'v1.1.3');
           assert.equal(report.upstream_commit, '84c3e597');
           assert.equal(report.supported, 'yes');
@@ -102,7 +102,7 @@ def test_install_sidecars_replaces_same_path_when_contents_change():
 
         const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cxpp-replace-'));
         const installRoot = path.join(root, 'install');
-        fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ version: '0.1.11' }));
+        fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ version: '0.1.12' }));
         fs.mkdirSync(path.join(root, 'upstream-bin', 'win32-x64'), { recursive: true });
         fs.writeFileSync(path.join(root, 'upstream-bin', 'upstream-release.json'), JSON.stringify({ version: 'v1.1.3' }));
         fs.writeFileSync(path.join(root, 'upstream-bin', 'win32-x64', 'codex-plus-plus.exe'), 'new-silent');
@@ -177,7 +177,7 @@ def test_macos_app_bundle_falls_back_to_user_applications():
         const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cxpp-macos-'));
         const fallbackRoot = path.join(root, 'home', 'Applications');
         const installRoot = path.join(root, 'Applications');
-        fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ version: '0.1.11' }));
+        fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ version: '0.1.12' }));
         fs.mkdirSync(path.join(root, 'upstream-bin', 'darwin-arm64'), { recursive: true });
         fs.writeFileSync(path.join(root, 'upstream-bin', 'upstream-release.json'), JSON.stringify({ version: 'v1.1.3' }));
         fs.writeFileSync(path.join(root, 'upstream-bin', 'darwin-arm64', 'codex-plus-plus'), 'silent');
@@ -228,7 +228,7 @@ def test_macos_app_bundle_falls_back_to_user_applications():
     )
 
 
-def test_unsupported_linux_postinstall_is_nonfatal_but_launch_fails():
+def test_linux_codex_desktop_install_creates_shim_and_entrypoint():
     assert_node_ok(
         r"""
         const assert = require('node:assert/strict');
@@ -238,23 +238,239 @@ def test_unsupported_linux_postinstall_is_nonfatal_but_launch_fails():
         const launcher = require('./npm/launcher.js');
 
         const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cxpp-linux-'));
-        fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ version: '0.1.11' }));
-        fs.mkdirSync(path.join(root, 'upstream-bin'), { recursive: true });
+        const home = path.join(root, 'home');
+        const xdgData = path.join(root, 'xdg-data');
+        const xdgState = path.join(root, 'xdg-state');
+        const installRoot = path.join(root, 'install');
+        const codexApp = path.join(root, 'opt', 'codex-desktop');
+        fs.mkdirSync(codexApp, { recursive: true });
+        fs.writeFileSync(path.join(codexApp, 'start.sh'), '#!/usr/bin/env bash\n');
+        fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ version: '0.1.12' }));
+        fs.mkdirSync(path.join(root, 'upstream-bin', 'linux-x64'), { recursive: true });
         fs.writeFileSync(path.join(root, 'upstream-bin', 'upstream-release.json'), JSON.stringify({ version: 'v1.1.3' }));
+        fs.writeFileSync(path.join(root, 'upstream-bin', 'linux-x64', 'codex-plus-plus'), 'silent');
+
+        (async () => {
+          const install = await launcher.runLauncher(['install-app'], {
+            packageRoot: root,
+            installRoot,
+            platform: 'linux',
+            arch: 'x64',
+            homeDir: home,
+            env: {
+              XDG_DATA_HOME: xdgData,
+              XDG_STATE_HOME: xdgState,
+              CODEXPP_LINUX_CODEX_START: path.join(codexApp, 'start.sh'),
+            },
+          });
+          assert.equal(install.status, 0);
+          assert.equal(fs.readFileSync(path.join(installRoot, 'codex-plus-plus'), 'utf8'), 'silent');
+
+          const shim = path.join(xdgData, 'Codex++', 'codex-desktop-linux-shim', 'codex.exe');
+          assert.ok(fs.existsSync(shim));
+          assert.match(fs.readFileSync(shim, 'utf8'), /exec .*start\.sh.* -- "\$@"/);
+
+          const entry = path.join(xdgData, 'applications', 'codex-plus-plus.desktop');
+          assert.ok(fs.existsSync(entry));
+          assert.match(fs.readFileSync(entry, 'utf8'), /Name=Codex\+\+/);
+          assert.match(fs.readFileSync(entry, 'utf8'), /--app-path/);
+
+          const report = launcher.doctorReport({
+            packageRoot: root,
+            installRoot,
+            platform: 'linux',
+            arch: 'x64',
+            homeDir: home,
+            env: {
+              XDG_DATA_HOME: xdgData,
+              XDG_STATE_HOME: xdgState,
+              CODEXPP_LINUX_CODEX_START: path.join(codexApp, 'start.sh'),
+            },
+          });
+          assert.equal(report.supported, 'yes');
+          assert.equal(report.manager_binary_state, 'unsupported');
+          assert.equal(report.manager_entrypoint_state, 'unsupported');
+          assert.equal(report.linux_codex_desktop_state, 'found');
+          assert.equal(report.linux_codex_shim_state, 'installed');
+        })().catch((error) => {
+          console.error(error);
+          process.exit(1);
+        });
+        """
+    )
+
+
+def test_linux_postinstall_is_nonfatal_when_codex_desktop_missing():
+    assert_node_ok(
+        r"""
+        const assert = require('node:assert/strict');
+        const fs = require('node:fs');
+        const os = require('node:os');
+        const path = require('node:path');
+        const launcher = require('./npm/launcher.js');
+
+        const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cxpp-linux-missing-'));
+        fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ version: '0.1.12' }));
+        fs.mkdirSync(path.join(root, 'upstream-bin', 'linux-x64'), { recursive: true });
+        fs.writeFileSync(path.join(root, 'upstream-bin', 'upstream-release.json'), JSON.stringify({ version: 'v1.1.3' }));
+        fs.writeFileSync(path.join(root, 'upstream-bin', 'linux-x64', 'codex-plus-plus'), 'silent');
 
         (async () => {
           const postinstall = await launcher.runLauncher(['npm-postinstall'], {
             packageRoot: root,
             platform: 'linux',
             arch: 'x64',
+            homeDir: path.join(root, 'home'),
             env: {},
           });
           assert.equal(postinstall.status, 0);
 
-          assert.throws(
-            () => launcher.spawnSidecar('silent', [], { packageRoot: root, platform: 'linux', arch: 'x64', env: {} }),
-            { code: 'CODEXPP_UNSUPPORTED_PLATFORM' },
+          await assert.rejects(
+            () => launcher.runLauncher(['install-app'], {
+              packageRoot: root,
+              platform: 'linux',
+              arch: 'x64',
+              homeDir: path.join(root, 'home'),
+              env: {},
+            }),
+            { code: 'CODEXPP_MISSING_LINUX_CODEX_DESKTOP' },
           );
+        })().catch((error) => {
+          console.error(error);
+          process.exit(1);
+        });
+        """
+    )
+
+
+def test_linux_appimage_appdir_detection_creates_shim():
+    assert_node_ok(
+        r"""
+        const assert = require('node:assert/strict');
+        const fs = require('node:fs');
+        const os = require('node:os');
+        const path = require('node:path');
+        const launcher = require('./npm/launcher.js');
+
+        const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cxpp-linux-appdir-'));
+        const appDir = path.join(root, 'AppDir');
+        const start = path.join(appDir, 'opt', 'codex-desktop', 'start.sh');
+        fs.mkdirSync(path.dirname(start), { recursive: true });
+        fs.writeFileSync(start, '#!/usr/bin/env bash\n');
+        fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ version: '0.1.12' }));
+        fs.mkdirSync(path.join(root, 'upstream-bin', 'linux-x64'), { recursive: true });
+        fs.writeFileSync(path.join(root, 'upstream-bin', 'upstream-release.json'), JSON.stringify({ version: 'v1.1.3' }));
+        fs.writeFileSync(path.join(root, 'upstream-bin', 'linux-x64', 'codex-plus-plus'), 'silent');
+
+        (async () => {
+          const result = await launcher.installApp({
+            packageRoot: root,
+            installRoot: path.join(root, 'install'),
+            platform: 'linux',
+            arch: 'x64',
+            homeDir: path.join(root, 'home'),
+            env: {
+              XDG_DATA_HOME: path.join(root, 'xdg-data'),
+              XDG_STATE_HOME: path.join(root, 'xdg-state'),
+              APPDIR: appDir,
+            },
+            which() {
+              return '';
+            },
+          });
+          assert.equal(result.linux.startScript, start);
+          assert.ok(fs.existsSync(path.join(root, 'xdg-data', 'Codex++', 'codex-desktop-linux-shim', 'codex.exe')));
+        })().catch((error) => {
+          console.error(error);
+          process.exit(1);
+        });
+        """
+    )
+
+
+def test_linux_launch_uses_silent_sidecar_and_auto_app_path():
+    assert_node_ok(
+        r"""
+        const assert = require('node:assert/strict');
+        const fs = require('node:fs');
+        const os = require('node:os');
+        const path = require('node:path');
+        const launcher = require('./npm/launcher.js');
+
+        const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cxpp-linux-launch-'));
+        const installRoot = path.join(root, 'install');
+        const home = path.join(root, 'home');
+        const xdgData = path.join(root, 'xdg-data');
+        const xdgState = path.join(root, 'xdg-state');
+        const codexApp = path.join(root, 'opt', 'codex-desktop');
+        fs.mkdirSync(codexApp, { recursive: true });
+        fs.writeFileSync(path.join(codexApp, 'start.sh'), '#!/usr/bin/env bash\n');
+        fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ version: '0.1.12' }));
+        fs.mkdirSync(path.join(root, 'upstream-bin', 'linux-x64'), { recursive: true });
+        fs.writeFileSync(path.join(root, 'upstream-bin', 'upstream-release.json'), JSON.stringify({ version: 'v1.1.3' }));
+        fs.writeFileSync(path.join(root, 'upstream-bin', 'linux-x64', 'codex-plus-plus'), 'silent');
+        fs.mkdirSync(installRoot, { recursive: true });
+        fs.writeFileSync(path.join(installRoot, 'codex-plus-plus'), 'silent');
+
+        const spawned = [];
+        (async () => {
+          const launch = await launcher.runLauncher(['launch', '--', '--app-path', path.join(root, 'shim')], {
+            packageRoot: root,
+            installRoot,
+            platform: 'linux',
+            arch: 'x64',
+            homeDir: home,
+            env: {
+              XDG_DATA_HOME: xdgData,
+              XDG_STATE_HOME: xdgState,
+            },
+            which() {
+              return '';
+            },
+            spawnSync(command, args) {
+              spawned.push({ command, args });
+              return { status: 0, stdout: '', stderr: '' };
+            },
+          });
+          assert.equal(launch.status, 0);
+          assert.equal(spawned[0].command, path.join(installRoot, 'codex-plus-plus'));
+          assert.deepEqual(spawned[0].args, ['--app-path', path.join(root, 'shim')]);
+
+          const implicit = await launcher.runLauncher(['launch', '--new-chat'], {
+            packageRoot: root,
+            installRoot,
+            platform: 'linux',
+            arch: 'x64',
+            homeDir: home,
+            env: {
+              XDG_DATA_HOME: xdgData,
+              XDG_STATE_HOME: xdgState,
+              CODEXPP_LINUX_CODEX_START: path.join(codexApp, 'start.sh'),
+            },
+            which() {
+              return '';
+            },
+            spawnSync(command, args) {
+              spawned.push({ command, args });
+              return { status: 0, stdout: '', stderr: '' };
+            },
+          });
+          assert.equal(implicit.status, 0);
+          assert.equal(spawned[1].command, path.join(installRoot, 'codex-plus-plus'));
+          assert.deepEqual(spawned[1].args, ['--app-path', path.join(xdgData, 'Codex++', 'codex-desktop-linux-shim'), '--new-chat']);
+          assert.ok(fs.existsSync(path.join(xdgData, 'Codex++', 'codex-desktop-linux-shim', 'codex.exe')));
+
+          const manager = await launcher.runLauncher(['manager'], {
+            packageRoot: root,
+            installRoot,
+            platform: 'linux',
+            arch: 'x64',
+            env: {},
+            spawnSync() {
+              throw new Error('manager should not spawn');
+            },
+          });
+          assert.equal(manager.status, 1);
         })().catch((error) => {
           console.error(error);
           process.exit(1);

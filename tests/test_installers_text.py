@@ -105,7 +105,7 @@ def test_smoke_install_uses_current_package_version_tarball():
 def test_package_exposes_only_explicit_commands():
     content = Path("package.json").read_text(encoding="utf-8")
 
-    assert '"version": "0.1.11"' in content
+    assert '"version": "0.1.12"' in content
     assert '"codex_plus_plus_launcher/*.py"' in content
     assert '"codex_plus_plus_launcher/assets/*"' in content
     assert '"upstream-bin/**"' in content
@@ -120,8 +120,12 @@ def test_readme_explains_wrapper_owns_upstream_updates():
     assert "更新这个 wrapper 包" in content
     assert "上游 GitHub Release" in content
     assert "Codex++ 管理工具" in content
-    assert "Linux 暂不提供上游桌面 sidecar" in content
+    assert "codex-desktop-linux" in content
+    assert "codex.exe" in content
+    assert "Linux 暂不内置 Codex++ 管理工具" in content
     assert "updating this wrapper package" in content_en
     assert "latest upstream GitHub Release" in content_en
     assert "Codex++ Manager" in content_en
-    assert "Linux does not ship the upstream desktop sidecar" in content_en
+    assert "codex-desktop-linux" in content_en
+    assert "codex.exe" in content_en
+    assert "Codex++ Manager is not bundled on Linux yet" in content_en

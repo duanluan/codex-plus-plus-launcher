@@ -27,12 +27,19 @@ function buildTargetArgs(key) {
   if (key === 'darwin-arm64') {
     return ['--target', 'aarch64-apple-darwin'];
   }
+  if (key === 'linux-x64') {
+    return [];
+  }
   return [];
 }
 
 function cargoTargetForKey(key) {
   const args = buildTargetArgs(key);
   return args.length ? args[1] : '';
+}
+
+function packageBuildArgs(key) {
+  return key === 'linux-x64' ? ['-p', 'codex-plus-launcher'] : [];
 }
 
 function main() {
@@ -49,20 +56,27 @@ function main() {
     run('git', ['checkout', 'FETCH_HEAD'], { cwd: upstreamDir });
   }
 
-  run('npm', ['install', '--package-lock=false'], { cwd: path.join(upstreamDir, 'apps', 'codex-plus-manager'), shell: process.platform === 'win32' });
-  run('npm', ['run', 'vite:build'], { cwd: path.join(upstreamDir, 'apps', 'codex-plus-manager'), shell: process.platform === 'win32' });
-  run('cargo', ['build', '--release', ...buildTargetArgs(key)], { cwd: upstreamDir });
+  if (key !== 'linux-x64') {
+    run('npm', ['install', '--package-lock=false'], { cwd: path.join(upstreamDir, 'apps', 'codex-plus-manager'), shell: process.platform === 'win32' });
+    run('npm', ['run', 'vite:build'], { cwd: path.join(upstreamDir, 'apps', 'codex-plus-manager'), shell: process.platform === 'win32' });
+  }
+  run('cargo', ['build', '--release', ...buildTargetArgs(key), ...packageBuildArgs(key)], { cwd: upstreamDir });
 
   const cargoTarget = cargoTargetForKey(key);
   const targetDir = path.join(upstreamDir, 'target', ...(cargoTarget ? [cargoTarget] : []), 'release');
   fs.mkdirSync(outDir, { recursive: true });
   const exe = key.startsWith('win32') ? '.exe' : '';
   fs.copyFileSync(path.join(targetDir, `codex-plus-plus${exe}`), path.join(outDir, `codex-plus-plus${exe}`));
-  fs.copyFileSync(path.join(targetDir, `codex-plus-plus-manager${exe}`), path.join(outDir, `codex-plus-plus-manager${exe}`));
+  const managerSource = path.join(targetDir, `codex-plus-plus-manager${exe}`);
+  if (fs.existsSync(managerSource)) {
+    fs.copyFileSync(managerSource, path.join(outDir, `codex-plus-plus-manager${exe}`));
+  }
   const iconSource = key.startsWith('darwin')
     ? path.join(upstreamDir, 'apps', 'codex-plus-manager', 'src-tauri', 'icons', 'icon.png')
     : path.join(upstreamDir, 'apps', 'codex-plus-manager', 'src-tauri', 'icons', 'icon.ico');
-  fs.copyFileSync(iconSource, path.join(outDir, key.startsWith('darwin') ? 'codex-plus-plus.png' : 'codex-plus-plus.ico'));
+  if (fs.existsSync(iconSource)) {
+    fs.copyFileSync(iconSource, path.join(outDir, key.startsWith('darwin') ? 'codex-plus-plus.png' : 'codex-plus-plus.ico'));
+  }
 
   const cargoToml = fs.readFileSync(path.join(upstreamDir, 'Cargo.toml'), 'utf8');
   const versionMatch = cargoToml.match(/^\s*version\s*=\s*"([^"]+)"/m);
@@ -86,4 +100,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { buildTargetArgs, cargoTargetForKey, main, platformKey };
+module.exports = { buildTargetArgs, cargoTargetForKey, main, packageBuildArgs, platformKey };
