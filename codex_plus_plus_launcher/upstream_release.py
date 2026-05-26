@@ -174,6 +174,13 @@ def fetch_latest_release(timeout: int = 20) -> UpstreamRelease:
             if tag_error.code not in {403, 429}:
                 raise
             return _latest_release_from_redirect(timeout)
+        except urllib.error.URLError:
+            return _latest_release_from_redirect(timeout)
+    except urllib.error.URLError:
+        try:
+            return _latest_release_from_tags_api(timeout)
+        except urllib.error.URLError:
+            return _latest_release_from_redirect(timeout)
 
 
 def latest_release_install_spec(release: UpstreamRelease) -> str:

@@ -47,19 +47,19 @@ def test_fetch_latest_release_falls_back_to_redirect_on_rate_limit(monkeypatch):
 
 def test_parse_latest_release_payload_selects_platform_assets():
     payload = {
-        "tag_name": "v1.1.3",
-        "html_url": "https://github.com/BigPizzaV3/CodexPlusPlus/releases/tag/v1.1.3",
+        "tag_name": "v1.1.7",
+        "html_url": "https://github.com/BigPizzaV3/CodexPlusPlus/releases/tag/v1.1.7",
         "assets": [
             {
-                "name": "CodexPlusPlus-1.1.3-windows-x64-setup.exe",
+                "name": "CodexPlusPlus-1.1.7-windows-x64-setup.exe",
                 "browser_download_url": "https://example.test/windows.exe",
             },
             {
-                "name": "CodexPlusPlus-1.1.3-macos-x64.dmg",
+                "name": "CodexPlusPlus-1.1.7-macos-x64.dmg",
                 "browser_download_url": "https://example.test/macos-x64.dmg",
             },
             {
-                "name": "CodexPlusPlus-1.1.3-macos-arm64.dmg",
+                "name": "CodexPlusPlus-1.1.7-macos-arm64.dmg",
                 "browser_download_url": "https://example.test/macos-arm64.dmg",
             },
             {
@@ -71,14 +71,14 @@ def test_parse_latest_release_payload_selects_platform_assets():
 
     release = upstream_release.parse_latest_release_payload(payload)
 
-    assert release.version == "v1.1.3"
-    assert release.asset_name == "CodexPlusPlus-1.1.3-windows-x64-setup.exe"
+    assert release.version == "v1.1.7"
+    assert release.asset_name == "CodexPlusPlus-1.1.7-windows-x64-setup.exe"
     assert release.asset_url == "https://example.test/windows.exe"
-    assert release.windows_asset_name == "CodexPlusPlus-1.1.3-windows-x64-setup.exe"
+    assert release.windows_asset_name == "CodexPlusPlus-1.1.7-windows-x64-setup.exe"
     assert release.windows_asset_url == "https://example.test/windows.exe"
-    assert release.macos_x64_asset_name == "CodexPlusPlus-1.1.3-macos-x64.dmg"
-    assert release.macos_arm64_asset_name == "CodexPlusPlus-1.1.3-macos-arm64.dmg"
-    assert release.source_zip_url == f"https://github.com/{upstream_release.UPSTREAM_REPOSITORY}/archive/refs/tags/v1.1.3.zip"
+    assert release.macos_x64_asset_name == "CodexPlusPlus-1.1.7-macos-x64.dmg"
+    assert release.macos_arm64_asset_name == "CodexPlusPlus-1.1.7-macos-arm64.dmg"
+    assert release.source_zip_url == f"https://github.com/{upstream_release.UPSTREAM_REPOSITORY}/archive/refs/tags/v1.1.7.zip"
 
 
 def test_fetch_latest_release_falls_back_to_highest_stable_tag_on_rate_limit(monkeypatch):
@@ -92,7 +92,7 @@ def test_fetch_latest_release_falls_back_to_highest_stable_tag_on_rate_limit(mon
         payload = b"""
         [
           {"name": "v1.1.0", "commit": {"sha": "old"}},
-          {"name": "v1.1.3", "commit": {"sha": "84c3e597"}},
+          {"name": "v1.1.7", "commit": {"sha": "333c2b0c"}},
           {"name": "v1.1.2", "commit": {"sha": "older"}}
         ]
         """
@@ -111,8 +111,41 @@ def test_fetch_latest_release_falls_back_to_highest_stable_tag_on_rate_limit(mon
     release = upstream_release.fetch_latest_release()
 
     assert calls == [upstream_release.UPSTREAM_RELEASE_API_URL, upstream_release.UPSTREAM_TAGS_API_URL]
-    assert release.version == "v1.1.3"
-    assert release.commit == "84c3e597"
+    assert release.version == "v1.1.7"
+    assert release.commit == "333c2b0c"
+
+
+def test_fetch_latest_release_falls_back_to_tags_on_url_error(monkeypatch):
+    calls = []
+
+    def fake_urlopen(request, timeout):
+        calls.append(request.full_url)
+        if request.full_url == upstream_release.UPSTREAM_RELEASE_API_URL:
+            raise urllib.error.URLError("network reset")
+        assert request.full_url == upstream_release.UPSTREAM_TAGS_API_URL
+        payload = b"""
+        [
+          {"name": "v1.1.7", "commit": {"sha": "333c2b0c"}},
+          {"name": "v1.1.6", "commit": {"sha": "older"}}
+        ]
+        """
+        return type(
+            "Response",
+            (),
+            {
+                "__enter__": lambda self: self,
+                "__exit__": lambda self, *_args: None,
+                "read": lambda self: payload,
+            },
+        )()
+
+    monkeypatch.setattr(upstream_release.urllib.request, "urlopen", fake_urlopen)
+
+    release = upstream_release.fetch_latest_release()
+
+    assert calls == [upstream_release.UPSTREAM_RELEASE_API_URL, upstream_release.UPSTREAM_TAGS_API_URL]
+    assert release.version == "v1.1.7"
+    assert release.commit == "333c2b0c"
 
 
 def test_fetch_latest_release_prefers_newer_tag_than_latest_release(monkeypatch):
@@ -126,7 +159,7 @@ def test_fetch_latest_release_prefers_newer_tag_than_latest_release(monkeypatch)
             assert request.full_url == upstream_release.UPSTREAM_TAGS_API_URL
             payload = b"""
             [
-              {"name": "v1.1.3", "commit": {"sha": "84c3e597"}},
+              {"name": "v1.1.7", "commit": {"sha": "333c2b0c"}},
               {"name": "v1.1.2", "commit": {"sha": "older"}}
             ]
             """
@@ -145,5 +178,5 @@ def test_fetch_latest_release_prefers_newer_tag_than_latest_release(monkeypatch)
     release = upstream_release.fetch_latest_release()
 
     assert calls == [upstream_release.UPSTREAM_RELEASE_API_URL, upstream_release.UPSTREAM_TAGS_API_URL]
-    assert release.version == "v1.1.3"
-    assert release.commit == "84c3e597"
+    assert release.version == "v1.1.7"
+    assert release.commit == "333c2b0c"
