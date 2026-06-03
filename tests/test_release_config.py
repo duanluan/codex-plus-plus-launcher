@@ -69,7 +69,13 @@ def test_sync_upstream_workflow_exists():
     assert "workflow_dispatch:" in content
     assert "write_latest_release_json" in content
     assert ".github/upstream-sync/latest.json" in content
-    assert "gh pr create" in content
+    assert "actions: write" in content
+    assert "npm view" in content
+    assert "target_version" in content
+    assert "git push origin HEAD:main" in content
+    assert "git tag \"v${TARGET_VERSION}\"" in content
+    assert "gh workflow run release.yml --ref \"v${TARGET_VERSION}\"" in content
+    assert "gh pr create" not in content
 
 
 def test_legacy_npm_workflow_retires_pre_0_1_10_versions():
