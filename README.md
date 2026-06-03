@@ -23,7 +23,7 @@ npm install -g @duanluan/codex-plus-plus-launcher
 
 postinstall 只安装入口和快捷方式，不会自动启动 Codex++、管理工具或 Codex 进程。
 
-Windows/npm 路线默认把“更新 Codex++”收敛成“更新这个 wrapper 包”。也就是说，用户获取最新 Codex++ 能力的主要方式是升级 `@duanluan/codex-plus-plus-launcher`；wrapper 在发版时会重新同步并打包当时最新的上游 GitHub Release，而不是要求用户单独运行上游 `.exe` / `.dmg` 安装器。
+Windows/npm 路线默认把“更新 Codex++”变成“更新这个 wrapper 包”。也就是说，用户获取最新 Codex++ 能力的主要方式是升级 `@duanluan/codex-plus-plus-launcher`；wrapper 在发版时会重新同步并打包当时最新的上游 GitHub Release，而不是要求用户单独运行上游 `.exe` / `.dmg` 安装器。
 
 ## 常用命令
 

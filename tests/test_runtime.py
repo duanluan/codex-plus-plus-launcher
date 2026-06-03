@@ -247,6 +247,7 @@ def test_install_app_falls_back_for_msix(monkeypatch, tmp_path):
 
 def test_install_app_uses_native_patch_when_writable(monkeypatch, tmp_path):
     monkeypatch.setenv("CODEXPP_HOME", str(tmp_path / "state"))
+    monkeypatch.setattr(runtime.sys, "platform", "win32")
     app_dir = tmp_path / "Codex" / "app"
     resources = app_dir / "resources"
     resources.mkdir(parents=True)
@@ -333,7 +334,7 @@ def test_install_windows_shortcuts_creates_desktop_and_start_menu_entries(monkey
     assert result.shortcut_target == Path(r"C:\Windows\System32\wscript.exe")
     assert result.shortcut_launcher == paths.assets_dir / "launch-codexpp.vbs"
     assert result.legacy_auto_inject_state == "removed"
-    assert result.expected_launcher_version == "0.1.13"
+    assert result.expected_launcher_version == "1.2.0"
     assert result.global_command_version == "0.1.10"
     assert result.shortcut_binary_version == "0.1.5"
     assert result.stale_global_binaries == "none"
@@ -392,7 +393,7 @@ def test_install_windows_shortcuts_can_skip_real_shortcut_creation(monkeypatch, 
 
     assert result.shortcut_state == "skipped"
     assert result.start_menu_state == "skipped"
-    assert result.expected_launcher_version == "0.1.13"
+    assert result.expected_launcher_version == "1.2.0"
     assert result.stale_global_binaries == "none"
 
 

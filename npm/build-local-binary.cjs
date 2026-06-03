@@ -45,7 +45,7 @@ function packageBuildArgs(key) {
 function main() {
   const root = packageRoot();
   const upstreamDir = process.env.CODEXPP_UPSTREAM_DIR || path.join(os.tmpdir(), 'CodexPlusPlus-upstream-build');
-  const ref = process.env.CODEXPP_UPSTREAM_REF || 'v1.1.7';
+  const ref = process.env.CODEXPP_UPSTREAM_REF || 'v1.2.0';
   const key = process.env.CODEXPP_SIDECAR_PLATFORM || platformKey();
   const outDir = path.join(root, 'upstream-bin', key);
 

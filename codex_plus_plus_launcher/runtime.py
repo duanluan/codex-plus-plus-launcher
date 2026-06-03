@@ -11,7 +11,7 @@ import tempfile
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any
 
 from codex_plus_plus_launcher import __version__
@@ -741,7 +741,7 @@ def install_windows_shortcuts(paths: RuntimePaths, mode: str = "real") -> Instal
     start_menu_dir = Path(os.environ.get("APPDATA", str(Path.home() / "AppData" / "Roaming"))) / "Microsoft" / "Windows" / "Start Menu" / "Programs"
     desktop_link = desktop_dir / "Codex++.lnk"
     start_menu_link = start_menu_dir / "Codex++.lnk"
-    shortcut_target = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "wscript.exe"
+    shortcut_target = Path(str(PureWindowsPath(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "wscript.exe"))
     arguments = f'"{launcher_script}"'
     working_directory = paths.home
     description = "Launch Codex++"

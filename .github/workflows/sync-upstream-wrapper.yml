@@ -46,12 +46,12 @@ jobs:
         run: |
           if [ -f ".github/upstream-sync/latest.json" ]; then
             recorded_version="$(python - <<'PY'
-import json
-from pathlib import Path
-payload = json.loads(Path(".github/upstream-sync/latest.json").read_text(encoding="utf-8"))
-print(payload.get("upstream_version", ""))
-PY
-)"
+          import json
+          from pathlib import Path
+          payload = json.loads(Path(".github/upstream-sync/latest.json").read_text(encoding="utf-8"))
+          print(payload.get("upstream_version", ""))
+          PY
+            )"
           else
             recorded_version=""
           fi
@@ -91,42 +91,42 @@ PY
         shell: bash
         run: |
           python - <<'PY'
-import json
-import re
-from pathlib import Path
+          import json
+          import re
+          from pathlib import Path
 
-package_json = Path("package.json")
-payload = json.loads(package_json.read_text(encoding="utf-8"))
-major, minor, patch = map(int, payload["version"].split("."))
-next_version = f"{major}.{minor}.{patch + 1}"
-payload["version"] = next_version
-package_json.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+          package_json = Path("package.json")
+          payload = json.loads(package_json.read_text(encoding="utf-8"))
+          major, minor, patch = map(int, payload["version"].split("."))
+          next_version = f"{major}.{minor}.{patch + 1}"
+          payload["version"] = next_version
+          package_json.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
-for relative_path, pattern in [
-    ("pyproject.toml", r'^version = ".*"$'),
-    ("codex_plus_plus_launcher/__init__.py", r'^__version__ = ".*"$'),
-]:
-    path = Path(relative_path)
-    text = path.read_text(encoding="utf-8")
-    updated = re.sub(pattern, lambda _m: f'version = "{next_version}"' if relative_path.endswith("pyproject.toml") else f'__version__ = "{next_version}"', text, flags=re.MULTILINE)
-    path.write_text(updated, encoding="utf-8")
-PY
+          for relative_path, pattern in [
+              ("pyproject.toml", r'^version = ".*"$'),
+              ("codex_plus_plus_launcher/__init__.py", r'^__version__ = ".*"$'),
+          ]:
+              path = Path(relative_path)
+              text = path.read_text(encoding="utf-8")
+              updated = re.sub(pattern, lambda _m: f'version = "{next_version}"' if relative_path.endswith("pyproject.toml") else f'__version__ = "{next_version}"', text, flags=re.MULTILINE)
+              path.write_text(updated, encoding="utf-8")
+          PY
 
       - name: Update text tests for new wrapper version
         if: steps.recorded.outputs.version != steps.upstream.outputs.version && steps.existing.outputs.exists != 'true'
         shell: bash
         run: |
           python - <<'PY'
-from pathlib import Path
-import re
-import json
+          from pathlib import Path
+          import re
+          import json
 
-version = json.loads(Path("package.json").read_text(encoding="utf-8"))["version"]
-path = Path("tests/test_installers_text.py")
-text = path.read_text(encoding="utf-8")
-text = re.sub(r'"version": "\d+\.\d+\.\d+"', f'"version": "{version}"', text)
-path.write_text(text, encoding="utf-8")
-PY
+          version = json.loads(Path("package.json").read_text(encoding="utf-8"))["version"]
+          path = Path("tests/test_installers_text.py")
+          text = path.read_text(encoding="utf-8")
+          text = re.sub(r'"version": "\d+\.\d+\.\d+"', f'"version": "{version}"', text)
+          path.write_text(text, encoding="utf-8")
+          PY
 
       - name: Record upstream sync metadata
         if: steps.recorded.outputs.version != steps.upstream.outputs.version && steps.existing.outputs.exists != 'true'

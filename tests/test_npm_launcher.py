@@ -36,7 +36,7 @@ def test_dispatcher_launch_manager_doctor_and_install_app():
 
         const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cxpp-package-'));
         const installRoot = path.join(root, 'install');
-        fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ version: '0.1.13' }));
+        fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ version: '1.2.0' }));
         fs.mkdirSync(path.join(root, 'upstream-bin', 'win32-x64'), { recursive: true });
         fs.writeFileSync(path.join(root, 'upstream-bin', 'upstream-release.json'), JSON.stringify({ version: 'v1.1.7', commit: '333c2b0c' }));
         fs.writeFileSync(path.join(root, 'upstream-bin', 'win32-x64', 'codex-plus-plus.exe'), 'silent-v1');
@@ -77,7 +77,7 @@ def test_dispatcher_launch_manager_doctor_and_install_app():
           assert.equal(spawned.at(-1).command, path.join(installRoot, 'codex-plus-plus-manager.exe'));
 
           const report = launcher.doctorReport(options);
-          assert.equal(report.package_version, '0.1.13');
+          assert.equal(report.package_version, '1.2.0');
           assert.equal(report.upstream_version, 'v1.1.7');
           assert.equal(report.upstream_commit, '333c2b0c');
           assert.equal(report.supported, 'yes');
@@ -102,7 +102,7 @@ def test_install_sidecars_replaces_same_path_when_contents_change():
 
         const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cxpp-replace-'));
         const installRoot = path.join(root, 'install');
-        fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ version: '0.1.13' }));
+        fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ version: '1.2.0' }));
         fs.mkdirSync(path.join(root, 'upstream-bin', 'win32-x64'), { recursive: true });
         fs.writeFileSync(path.join(root, 'upstream-bin', 'upstream-release.json'), JSON.stringify({ version: 'v1.1.7' }));
         fs.writeFileSync(path.join(root, 'upstream-bin', 'win32-x64', 'codex-plus-plus.exe'), 'new-silent');
@@ -177,7 +177,7 @@ def test_macos_app_bundle_falls_back_to_user_applications():
         const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cxpp-macos-'));
         const fallbackRoot = path.join(root, 'home', 'Applications');
         const installRoot = path.join(root, 'Applications');
-        fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ version: '0.1.13' }));
+        fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ version: '1.2.0' }));
         fs.mkdirSync(path.join(root, 'upstream-bin', 'darwin-arm64'), { recursive: true });
         fs.writeFileSync(path.join(root, 'upstream-bin', 'upstream-release.json'), JSON.stringify({ version: 'v1.1.7' }));
         fs.writeFileSync(path.join(root, 'upstream-bin', 'darwin-arm64', 'codex-plus-plus'), 'silent');
@@ -245,7 +245,7 @@ def test_linux_codex_desktop_install_creates_shim_and_entrypoint():
         const codexApp = path.join(root, 'opt', 'codex-desktop');
         fs.mkdirSync(codexApp, { recursive: true });
         fs.writeFileSync(path.join(codexApp, 'start.sh'), '#!/usr/bin/env bash\n');
-        fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ version: '0.1.13' }));
+        fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ version: '1.2.0' }));
         fs.mkdirSync(path.join(root, 'upstream-bin', 'linux-x64'), { recursive: true });
         fs.writeFileSync(path.join(root, 'upstream-bin', 'upstream-release.json'), JSON.stringify({ version: 'v1.1.7' }));
         fs.writeFileSync(path.join(root, 'upstream-bin', 'linux-x64', 'codex-plus-plus'), 'silent');
@@ -310,7 +310,7 @@ def test_linux_postinstall_is_nonfatal_when_codex_desktop_missing():
         const launcher = require('./npm/launcher.js');
 
         const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cxpp-linux-missing-'));
-        fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ version: '0.1.13' }));
+        fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ version: '1.2.0' }));
         fs.mkdirSync(path.join(root, 'upstream-bin', 'linux-x64'), { recursive: true });
         fs.writeFileSync(path.join(root, 'upstream-bin', 'upstream-release.json'), JSON.stringify({ version: 'v1.1.7' }));
         fs.writeFileSync(path.join(root, 'upstream-bin', 'linux-x64', 'codex-plus-plus'), 'silent');
@@ -357,7 +357,7 @@ def test_linux_appimage_appdir_detection_creates_shim():
         const start = path.join(appDir, 'opt', 'codex-desktop', 'start.sh');
         fs.mkdirSync(path.dirname(start), { recursive: true });
         fs.writeFileSync(start, '#!/usr/bin/env bash\n');
-        fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ version: '0.1.13' }));
+        fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ version: '1.2.0' }));
         fs.mkdirSync(path.join(root, 'upstream-bin', 'linux-x64'), { recursive: true });
         fs.writeFileSync(path.join(root, 'upstream-bin', 'upstream-release.json'), JSON.stringify({ version: 'v1.1.7' }));
         fs.writeFileSync(path.join(root, 'upstream-bin', 'linux-x64', 'codex-plus-plus'), 'silent');
@@ -405,7 +405,7 @@ def test_linux_launch_uses_silent_sidecar_and_auto_app_path():
         const codexApp = path.join(root, 'opt', 'codex-desktop');
         fs.mkdirSync(codexApp, { recursive: true });
         fs.writeFileSync(path.join(codexApp, 'start.sh'), '#!/usr/bin/env bash\n');
-        fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ version: '0.1.13' }));
+        fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ version: '1.2.0' }));
         fs.mkdirSync(path.join(root, 'upstream-bin', 'linux-x64'), { recursive: true });
         fs.writeFileSync(path.join(root, 'upstream-bin', 'upstream-release.json'), JSON.stringify({ version: 'v1.1.7' }));
         fs.writeFileSync(path.join(root, 'upstream-bin', 'linux-x64', 'codex-plus-plus'), 'silent');
