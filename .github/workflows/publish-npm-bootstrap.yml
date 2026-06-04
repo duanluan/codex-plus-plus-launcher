@@ -70,13 +70,26 @@ jobs:
           python -c "from codex_plus_plus_launcher.upstream_release import write_latest_release_json; write_latest_release_json('upstream-bin/upstream-release.json')"
           python - <<'PY' >> "$GITHUB_ENV"
           import json
+          import os
+          from pathlib import Path
+
           payload = json.load(open("upstream-bin/upstream-release.json", encoding="utf-8"))
-          print(f"CODEXPP_UPSTREAM_REF={payload['version']}")
+          package_version = json.loads(Path("package.json").read_text(encoding="utf-8"))["version"]
+          target_version = package_version
+          payload["version"] = f"v{target_version}"
+          Path("upstream-bin/upstream-release.json").write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+          print(f"CODEXPP_UPSTREAM_REF={os.environ.get('CODEXPP_UPSTREAM_REF', f'v{target_version}')}")
           PY
 
       - name: Checkout upstream Codex++
         shell: bash
         run: git clone --depth 1 --branch "${CODEXPP_UPSTREAM_REF}" https://github.com/BigPizzaV3/CodexPlusPlus.git upstream
+
+      - name: Apply Codex++ plugin unlock patch
+        shell: bash
+        run: |
+          git -C upstream apply --check ../patches/codex-plus-plus-plugin-unlock.patch
+          git -C upstream apply ../patches/codex-plus-plus-plugin-unlock.patch
 
       - name: Build upstream frontend
         if: matrix.platform-key != 'linux-x64'

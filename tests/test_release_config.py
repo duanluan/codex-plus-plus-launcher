@@ -37,6 +37,9 @@ def test_release_workflow_publishes_npm_only():
     assert 'tags:\n      - "v*"' in content
     assert "python - <<'PY'" in content
     assert "CODEXPP_UPSTREAM_COMMIT" in content
+    assert "target_version = package_version" in content
+    assert 'print(f"CODEXPP_UPSTREAM_REF={os.environ.get(' in content
+    assert "v{target_version}" in content
 
 
 def test_manual_npm_publish_workflow_exists():
@@ -60,6 +63,8 @@ def test_manual_npm_publish_workflow_exists():
     assert "npm publish --access public" in content
     assert "secrets.NPM_TOKEN" in content
     assert "path: upstream-bin" in content
+    assert "target_version = package_version" in content
+    assert 'print(f"CODEXPP_UPSTREAM_REF={os.environ.get(' in content
 
 
 def test_sync_upstream_workflow_exists():
@@ -75,6 +80,8 @@ def test_sync_upstream_workflow_exists():
     assert "git push origin HEAD:main" in content
     assert "git tag \"v${TARGET_VERSION}\"" in content
     assert "gh workflow run release.yml --ref \"v${TARGET_VERSION}\"" in content
+    assert 'expected_launcher_version == "\\d+\\.\\d+\\.\\d+"' in content
+    assert "tests/test_runtime.py" in content
     assert "gh pr create" not in content
 
 

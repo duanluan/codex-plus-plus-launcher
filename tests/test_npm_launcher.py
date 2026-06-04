@@ -232,6 +232,7 @@ def test_linux_codex_desktop_install_creates_shim_and_entrypoint():
     assert_node_ok(
         r"""
         const assert = require('node:assert/strict');
+        const { spawnSync } = require('node:child_process');
         const fs = require('node:fs');
         const os = require('node:os');
         const path = require('node:path');
@@ -243,9 +244,23 @@ def test_linux_codex_desktop_install_creates_shim_and_entrypoint():
         const xdgState = path.join(root, 'xdg-state');
         const installRoot = path.join(root, 'install');
         const codexApp = path.join(root, 'opt', 'codex-desktop');
-        fs.mkdirSync(codexApp, { recursive: true });
-        fs.writeFileSync(path.join(codexApp, 'start.sh'), '#!/usr/bin/env bash\n');
+        fs.mkdirSync(path.join(codexApp, 'content', 'webview', 'assets'), { recursive: true });
+        fs.writeFileSync(
+          path.join(codexApp, 'start.sh'),
+          [
+            '#!/usr/bin/env bash',
+            'set -euo pipefail',
+            'SCRIPT_DIR="$(cd -P "$(dirname "$0")" && pwd)"',
+            'cat "$SCRIPT_DIR/content/webview/assets/plugin-auth-abcd.js" > "$CODEXPP_PLUGIN_RESULT"',
+            'printf "%s\\n" "$SCRIPT_DIR" > "$CODEXPP_PLUGIN_ROOT_RESULT"',
+            '',
+          ].join('\n'),
+        );
+        fs.writeFileSync(path.join(codexApp, 'content', 'webview', 'index.html'), '<html></html>');
+        fs.writeFileSync(path.join(codexApp, 'content', 'webview', 'assets', 'plugin-auth-abcd.js'), 'locked');
         fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ version: '1.2.0' }));
+        fs.mkdirSync(path.join(root, 'npm'), { recursive: true });
+        fs.writeFileSync(path.join(root, 'npm', 'plugin-auth-unlocked.js'), 'function e(e){return false}export{e as t};\n');
         fs.mkdirSync(path.join(root, 'upstream-bin', 'linux-x64'), { recursive: true });
         fs.writeFileSync(path.join(root, 'upstream-bin', 'upstream-release.json'), JSON.stringify({ version: 'v1.1.7' }));
         fs.writeFileSync(path.join(root, 'upstream-bin', 'linux-x64', 'codex-plus-plus'), 'silent');
@@ -268,7 +283,28 @@ def test_linux_codex_desktop_install_creates_shim_and_entrypoint():
 
           const shim = path.join(xdgData, 'Codex++', 'codex-desktop-linux-shim', 'codex.exe');
           assert.ok(fs.existsSync(shim));
-          assert.match(fs.readFileSync(shim, 'utf8'), /exec .*start\.sh.* -- "\$@"/);
+          const shimContent = fs.readFileSync(shim, 'utf8');
+          assert.match(shimContent, /plugin-auth-\*\.js/);
+          assert.match(shimContent, /content\/webview\/assets/);
+          assert.match(shimContent, /"\$TMP_APP_ROOT\/start\.sh" -- "\$@"/);
+          assert.equal(
+            fs.readFileSync(path.join(xdgData, 'Codex++', 'codex-desktop-linux-shim', 'plugin-auth-unlocked.js'), 'utf8'),
+            'function e(e){return false}export{e as t};\n',
+          );
+
+          const pluginResult = path.join(root, 'plugin-result.txt');
+          const pluginRootResult = path.join(root, 'plugin-root-result.txt');
+          const execResult = spawnSync(shim, [], {
+            encoding: 'utf8',
+            env: {
+              ...process.env,
+              CODEXPP_PLUGIN_RESULT: pluginResult,
+              CODEXPP_PLUGIN_ROOT_RESULT: pluginRootResult,
+            },
+          });
+          assert.equal(execResult.status, 0, execResult.stderr || execResult.stdout);
+          assert.equal(fs.readFileSync(pluginResult, 'utf8'), 'function e(e){return false}export{e as t};\n');
+          assert.notEqual(fs.readFileSync(pluginRootResult, 'utf8').trim(), codexApp);
 
           const entry = path.join(xdgData, 'applications', 'codex-plus-plus.desktop');
           assert.ok(fs.existsSync(entry));

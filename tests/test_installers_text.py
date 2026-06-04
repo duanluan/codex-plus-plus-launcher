@@ -75,6 +75,7 @@ def test_local_sidecar_builder_uses_upstream_rust_workspace():
 
     assert "BigPizzaV3/CodexPlusPlus.git" in content
     assert "CODEXPP_UPSTREAM_REF" in content
+    assert "defaultUpstreamRef" in content
     assert "CODEXPP_SIDECAR_PLATFORM" in content
     assert "'install'" in content
     assert "vite:build" in content
@@ -84,6 +85,8 @@ def test_local_sidecar_builder_uses_upstream_rust_workspace():
     assert "upstream-release.json" in content
     assert "codex-plus-plus.ico" in content
     assert "codex-plus-plus.png" in content
+    assert "applyPluginUnlockPatch" in content
+    assert "codex-plus-plus-plugin-unlock.patch" in content
     assert "built upstream sidecars" in content
 
 
@@ -105,12 +108,28 @@ def test_smoke_install_uses_current_package_version_tarball():
 def test_package_exposes_only_explicit_commands():
     content = Path("package.json").read_text(encoding="utf-8")
 
-    assert '"version": "1.2.0"' in content
+    assert '"version": "1.2.1"' in content
     assert '"codex_plus_plus_launcher/*.py"' in content
     assert '"codex_plus_plus_launcher/assets/*"' in content
     assert '"upstream-bin/**"' in content
+    assert '"patches/**"' in content
+    assert '"npm/plugin-auth-unlocked.js"' in content
     assert '"cxpp": "npm/cxpp.js"' in content
     assert '"codexpp": "npm/cxpp.js"' in content
+
+
+def test_npm_includes_aur_plugin_unlock_fix():
+    patch = Path("patches/codex-plus-plus-plugin-unlock.patch").read_text(encoding="utf-8")
+    auth = Path("npm/plugin-auth-unlocked.js").read_text(encoding="utf-8")
+    launcher = Path("npm/launcher.js").read_text(encoding="utf-8")
+
+    assert "codexPluginNavUnlockVersion" in patch
+    assert "unlockPluginNavButtons" in patch
+    assert "pluginMarketplaceUnlock" in patch
+    assert "function e(e){return false}export{e as t};" in auth
+    assert "pluginAuthUnlockPath" in launcher
+    assert "writeLinuxCodexShim" in launcher
+    assert "plugin-auth-*.js" in launcher
 
 
 def test_readme_explains_wrapper_owns_upstream_updates():

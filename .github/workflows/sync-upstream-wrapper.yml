@@ -115,6 +115,11 @@ jobs:
           text = re.sub(r'"version": "\d+\.\d+\.\d+"', f'"version": "{target_version}"', text)
           text_test.write_text(text, encoding="utf-8")
 
+          runtime_test = Path("tests/test_runtime.py")
+          text = runtime_test.read_text(encoding="utf-8")
+          text = re.sub(r'expected_launcher_version == "\d+\.\d+\.\d+"', f'expected_launcher_version == "{target_version}"', text)
+          runtime_test.write_text(text, encoding="utf-8")
+
           metadata_path = Path(".github/upstream-sync/latest.json")
           metadata_path.parent.mkdir(parents=True, exist_ok=True)
           metadata = {
@@ -136,7 +141,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add package.json pyproject.toml codex_plus_plus_launcher/__init__.py tests/test_installers_text.py .github/upstream-sync/latest.json
+          git add package.json pyproject.toml codex_plus_plus_launcher/__init__.py tests/test_installers_text.py tests/test_runtime.py .github/upstream-sync/latest.json
           git commit -m "release: sync Codex++ ${UPSTREAM_VERSION}"
           git push origin HEAD:main
 

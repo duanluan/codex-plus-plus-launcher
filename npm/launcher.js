@@ -13,6 +13,8 @@ const MANAGER_NAME = 'Codex++ 管理工具';
 const LINUX_SHIM_DIR_NAME = 'codex-desktop-linux-shim';
 const LINUX_SHIM_BINARY = 'codex.exe';
 const LINUX_DESKTOP_ENTRY = 'codex-plus-plus.desktop';
+const PLUGIN_AUTH_UNLOCK_FILE = 'plugin-auth-unlocked.js';
+const PLUGIN_AUTH_UNLOCK_CONTENT = 'function e(e){return false}export{e as t};\n';
 
 function optionValue(options, key, fallback) {
   const value = options[key];
@@ -61,6 +63,11 @@ function upstreamBinDir(options = {}) {
 function upstreamMetadataPath(options = {}) {
   const root = optionValue(options, 'packageRoot', packageRoot);
   return path.join(root, 'upstream-bin', 'upstream-release.json');
+}
+
+function pluginAuthUnlockPath(options = {}) {
+  const root = optionValue(options, 'packageRoot', packageRoot);
+  return optionValue(options, 'pluginAuthUnlockPath', () => path.join(root, 'npm', PLUGIN_AUTH_UNLOCK_FILE));
 }
 
 function readJsonFile(candidate, fsImpl = fs) {
@@ -585,11 +592,113 @@ function shellSingleQuote(value) {
   return `'${String(value).replace(/'/g, "'\\''")}'`;
 }
 
-function linuxCodexShimScript(startScript) {
+function linuxCodexShimScript(startScript, pluginAuthUnlockFile) {
   return [
     '#!/usr/bin/env bash',
     'set -euo pipefail',
-    `exec ${shellSingleQuote(startScript)} -- "$@"`,
+    '',
+    `START_SCRIPT=${shellSingleQuote(startScript)}`,
+    `PLUGIN_AUTH_UNLOCK_FILE=${shellSingleQuote(pluginAuthUnlockFile)}`,
+    'TMP_APP_ROOT=""',
+    'CHILD_PID=""',
+    '',
+    'resolve_file_dir() {',
+    '  local source="$1"',
+    '  local dir',
+    '  while [ -L "$source" ]; do',
+    '    dir="$(cd -P "$(dirname "$source")" && pwd)"',
+    '    source="$(readlink "$source")"',
+    '    case "$source" in',
+    '      /*) ;;',
+    '      *) source="$dir/$source" ;;',
+    '    esac',
+    '  done',
+    '  cd -P "$(dirname "$source")" && pwd',
+    '}',
+    '',
+    'cleanup() {',
+    '  if [ -n "$TMP_APP_ROOT" ]; then',
+    '    rm -rf "$TMP_APP_ROOT"',
+    '  fi',
+    '}',
+    '',
+    'forward_signal() {',
+    '  local sig="$1"',
+    '  if [ -n "$CHILD_PID" ] && kill -0 "$CHILD_PID" 2>/dev/null; then',
+    '    kill -"$sig" "$CHILD_PID" 2>/dev/null || true',
+    '  fi',
+    '}',
+    '',
+    'trap cleanup EXIT',
+    "trap 'forward_signal HUP' HUP",
+    "trap 'forward_signal INT' INT",
+    "trap 'forward_signal TERM' TERM",
+    '',
+    'APP_ROOT="$(resolve_file_dir "$START_SCRIPT")"',
+    'WEBVIEW_DIR="$APP_ROOT/content/webview"',
+    '',
+    'if [ ! -f "$PLUGIN_AUTH_UNLOCK_FILE" ]; then',
+    '  echo "Codex++ plugin auth unlock file not found: $PLUGIN_AUTH_UNLOCK_FILE" >&2',
+    '  exit 1',
+    'fi',
+    '',
+    'if [ ! -d "$WEBVIEW_DIR" ]; then',
+    '  exec "$START_SCRIPT" -- "$@"',
+    'fi',
+    '',
+    'TMP_APP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/codex-plus-plus-linux-app.XXXXXX")"',
+    'cp "$START_SCRIPT" "$TMP_APP_ROOT/start.sh"',
+    'chmod 755 "$TMP_APP_ROOT/start.sh"',
+    '',
+    'shopt -s dotglob nullglob',
+    'for entry in "$APP_ROOT"/*; do',
+    '  name="$(basename "$entry")"',
+    '  if [ "$name" = "start.sh" ] || [ "$name" = "content" ]; then',
+    '    continue',
+    '  fi',
+    '  ln -s "$entry" "$TMP_APP_ROOT/$name"',
+    'done',
+    'shopt -u dotglob nullglob',
+    '',
+    'mkdir -p "$TMP_APP_ROOT/content/webview/assets"',
+    'if [ -d "$APP_ROOT/content" ]; then',
+    '  shopt -s dotglob nullglob',
+    '  for entry in "$APP_ROOT/content"/*; do',
+    '    name="$(basename "$entry")"',
+    '    if [ "$name" = "webview" ]; then',
+    '      continue',
+    '    fi',
+    '    ln -s "$entry" "$TMP_APP_ROOT/content/$name"',
+    '  done',
+    '  shopt -u dotglob nullglob',
+    'fi',
+    '',
+    'shopt -s dotglob nullglob',
+    'for entry in "$WEBVIEW_DIR"/*; do',
+    '  name="$(basename "$entry")"',
+    '  if [ "$name" = "assets" ]; then',
+    '    continue',
+    '  fi',
+    '  ln -s "$entry" "$TMP_APP_ROOT/content/webview/$name"',
+    'done',
+    'for entry in "$WEBVIEW_DIR/assets"/*; do',
+    '  name="$(basename "$entry")"',
+    '  if [[ "$name" == plugin-auth-*.js ]]; then',
+    '    ln -s "$PLUGIN_AUTH_UNLOCK_FILE" "$TMP_APP_ROOT/content/webview/assets/$name"',
+    '  else',
+    '    ln -s "$entry" "$TMP_APP_ROOT/content/webview/assets/$name"',
+    '  fi',
+    'done',
+    'shopt -u dotglob nullglob',
+    '',
+    '"$TMP_APP_ROOT/start.sh" -- "$@" &',
+    'CHILD_PID=$!',
+    'set +e',
+    'wait "$CHILD_PID"',
+    'STATUS=$?',
+    'set -e',
+    'CHILD_PID=""',
+    'exit "$STATUS"',
     '',
   ].join('\n');
 }
@@ -599,9 +708,16 @@ function writeLinuxCodexShim(installation, options = {}) {
   const shimRoot = linuxShimRoot(options);
   fsImpl.mkdirSync(shimRoot, { recursive: true });
   const shimPath = path.join(shimRoot, LINUX_SHIM_BINARY);
-  fsImpl.writeFileSync(shimPath, linuxCodexShimScript(installation.startScript), 'utf8');
+  const pluginAuthTarget = path.join(shimRoot, PLUGIN_AUTH_UNLOCK_FILE);
+  const pluginAuthSource = pluginAuthUnlockPath(options);
+  if (fsImpl.existsSync(pluginAuthSource)) {
+    fsImpl.copyFileSync(pluginAuthSource, pluginAuthTarget);
+  } else {
+    fsImpl.writeFileSync(pluginAuthTarget, PLUGIN_AUTH_UNLOCK_CONTENT, 'utf8');
+  }
+  fsImpl.writeFileSync(shimPath, linuxCodexShimScript(installation.startScript, pluginAuthTarget), 'utf8');
   fsImpl.chmodSync(shimPath, 0o755);
-  return { shimRoot, shimPath };
+  return { shimRoot, shimPath, pluginAuthUnlock: pluginAuthTarget };
 }
 
 function linuxDesktopEntry({ name, execPath, iconPath, comment }) {
@@ -756,6 +872,7 @@ async function installLinuxApp(options = {}) {
   const shim = writeLinuxCodexShim(installation, options);
   installed.linuxShim = shim.shimPath;
   installed.linuxShimRoot = shim.shimRoot;
+  installed.linuxPluginAuthUnlock = shim.pluginAuthUnlock;
   installed.linuxCodexStart = installation.startScript;
   const entrypoints = await installEntrypoints(installed, { ...options, installRoot: installed.installRoot });
   const statePath = writeLinuxInstallState(installed, installation, options);

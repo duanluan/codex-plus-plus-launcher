@@ -9,11 +9,24 @@ function packageRoot() {
   return path.resolve(__dirname, '..');
 }
 
+function packageVersion(root = packageRoot()) {
+  return JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).version;
+}
+
+function defaultUpstreamRef(root = packageRoot()) {
+  return `v${packageVersion(root)}`;
+}
+
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, { stdio: 'inherit', shell: false, ...options });
   if (result.status !== 0) {
     process.exit(result.status ?? 1);
   }
+}
+
+function runSucceeds(command, args, options = {}) {
+  const result = spawnSync(command, args, { stdio: 'ignore', shell: false, ...options });
+  return result.status === 0;
 }
 
 function platformKey(platform = process.platform, arch = process.arch) {
@@ -42,10 +55,20 @@ function packageBuildArgs(key) {
   return key === 'linux-x64' ? ['-p', 'codex-plus-launcher'] : [];
 }
 
+function applyPluginUnlockPatch(upstreamDir, root = packageRoot()) {
+  const patchPath = path.join(root, 'patches', 'codex-plus-plus-plugin-unlock.patch');
+  if (runSucceeds('git', ['apply', '--reverse', '--check', patchPath], { cwd: upstreamDir })) {
+    return;
+  }
+  run('git', ['apply', '--check', patchPath], { cwd: upstreamDir });
+  run('git', ['apply', patchPath], { cwd: upstreamDir });
+}
+
 function main() {
   const root = packageRoot();
-  const upstreamDir = process.env.CODEXPP_UPSTREAM_DIR || path.join(os.tmpdir(), 'CodexPlusPlus-upstream-build');
-  const ref = process.env.CODEXPP_UPSTREAM_REF || 'v1.2.0';
+  const ref = process.env.CODEXPP_UPSTREAM_REF || defaultUpstreamRef(root);
+  const refKey = ref.replace(/[^A-Za-z0-9._-]/g, '_');
+  const upstreamDir = process.env.CODEXPP_UPSTREAM_DIR || path.join(os.tmpdir(), `CodexPlusPlus-upstream-build-${refKey}`);
   const key = process.env.CODEXPP_SIDECAR_PLATFORM || platformKey();
   const outDir = path.join(root, 'upstream-bin', key);
 
@@ -55,6 +78,8 @@ function main() {
     run('git', ['fetch', '--depth', '1', 'origin', ref], { cwd: upstreamDir });
     run('git', ['checkout', 'FETCH_HEAD'], { cwd: upstreamDir });
   }
+
+  applyPluginUnlockPatch(upstreamDir, root);
 
   if (key !== 'linux-x64') {
     run('npm', ['install', '--package-lock=false'], { cwd: path.join(upstreamDir, 'apps', 'codex-plus-manager'), shell: process.platform === 'win32' });
@@ -100,4 +125,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { buildTargetArgs, cargoTargetForKey, main, packageBuildArgs, platformKey };
+module.exports = { applyPluginUnlockPatch, buildTargetArgs, cargoTargetForKey, defaultUpstreamRef, main, packageBuildArgs, platformKey };
