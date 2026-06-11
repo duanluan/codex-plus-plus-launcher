@@ -131,7 +131,9 @@ jobs:
 
       - name: Test wrapper changes
         if: steps.package.outputs.current_version != steps.upstream.outputs.target_version
-        run: python -m pytest
+        run: |
+          python -m pip install -e ".[test]"
+          python -m pytest
 
       - name: Commit wrapper version
         if: steps.package.outputs.current_version != steps.upstream.outputs.target_version
