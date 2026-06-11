@@ -301,21 +301,23 @@ def test_install_app_falls_back_when_native_patch_fails(monkeypatch, tmp_path):
 
 def test_install_windows_shortcuts_creates_desktop_and_start_menu_entries(monkeypatch, tmp_path):
     monkeypatch.setattr(runtime.sys, "platform", "win32")
+    monkeypatch.setenv("CODEXPP_HOME", str(tmp_path / "state"))
     monkeypatch.setenv("APPDATA", str(tmp_path / "AppData" / "Roaming"))
     monkeypatch.setattr(runtime, "windows_global_binary_path", lambda: tmp_path / "cxpp-native-0.1.5-win32-x64.exe")
     monkeypatch.setattr(runtime, "legacy_auto_inject_state", lambda: "removed")
     monkeypatch.setattr(runtime, "global_command_version", lambda: "0.1.10")
     monkeypatch.setattr(runtime, "remove_outdated_global_binaries", lambda _target: [])
     monkeypatch.setattr(runtime, "describe_stale_global_binaries", lambda _target: "none")
-    monkeypatch.setattr(
-        runtime,
-        "deploy_bundled_assets",
-        lambda paths: {
+    def fake_deploy(paths):
+        icon_path = paths.assets_dir / "codex-plus-plus.ico"
+        icon_path.write_bytes(b"repo-icon")
+        return {
             "renderer_script": None,
             "icon_path": str(paths.assets_dir / "codex-plus-plus.ico"),
             "icon_source": "repo_asset",
-        },
-    )
+        }
+
+    monkeypatch.setattr(runtime, "deploy_bundled_assets", fake_deploy)
     seen = []
 
     def fake_run(command, **kwargs):
