@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "codex-plus-plus-launcher"
-version = "1.2.13"
+version = "1.2.14"
 description = "Launcher and installer wrapper for Codex++"
 readme = "README_PYPI.md"
 requires-python = ">=3.10"
