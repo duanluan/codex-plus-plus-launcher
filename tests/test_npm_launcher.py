@@ -626,3 +626,304 @@ def test_linux_launch_uses_silent_sidecar_and_auto_app_path():
         });
         """
     )
+
+
+SELF_HEAL_FIXTURE = r"""
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const launcher = require('./npm/launcher.js');
+
+function makeFixture(prefix, opts) {
+  opts = opts || {};
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  const installRoot = path.join(root, 'install');
+  const platform = opts.platform || 'win32';
+  const arch = opts.arch || 'x64';
+  const platDir = platform + '-' + arch;
+  const packageVersion = opts.packageVersion || '1.2.16';
+  fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ version: packageVersion }));
+  fs.mkdirSync(path.join(root, 'upstream-bin', platDir), { recursive: true });
+  fs.writeFileSync(path.join(root, 'upstream-bin', 'upstream-release.json'), JSON.stringify({ version: 'v1.1.7' }));
+  const exeSuffix = platform === 'win32' ? '.exe' : '';
+  fs.writeFileSync(path.join(root, 'upstream-bin', platDir, 'codex-plus-plus' + exeSuffix), 'silent-bundled');
+  if (platform !== 'linux') {
+    fs.writeFileSync(path.join(root, 'upstream-bin', platDir, 'codex-plus-plus-manager' + exeSuffix), 'manager-bundled');
+  }
+  fs.writeFileSync(path.join(root, 'upstream-bin', platDir, 'codex-plus-plus.ico'), 'icon');
+  return { root: root, installRoot: installRoot, platform: platform, arch: arch, packageVersion: packageVersion };
+}
+
+function captureStderr() {
+  const chunks = [];
+  return {
+    stream: { write: function(s) { chunks.push(String(s)); return true; } },
+    text: function() { return chunks.join(''); },
+  };
+}
+"""
+
+
+def test_self_heal_noop_when_drift_is_none():
+    assert_node_ok(
+        SELF_HEAL_FIXTURE
+        + r"""
+        (async () => {
+          const fx = makeFixture('cxpp-heal-none-');
+          fs.mkdirSync(fx.installRoot, { recursive: true });
+          fs.writeFileSync(path.join(fx.installRoot, 'codex-plus-plus.exe'), 'silent-bundled');
+          fs.writeFileSync(path.join(fx.installRoot, 'codex-plus-plus-manager.exe'), 'manager-bundled');
+          fs.writeFileSync(path.join(fx.installRoot, launcher.SIDECAR_VERSION_STAMP), '1.2.16\n');
+
+          const stderr = captureStderr();
+          const result = await launcher.ensureSidecarsFresh({
+            packageRoot: fx.root,
+            installRoot: fx.installRoot,
+            platform: 'win32',
+            arch: 'x64',
+            stderr: stderr.stream,
+            env: { CODEXPP_LANG: 'en' },
+          });
+          assert.equal(result.action, 'noop');
+          assert.equal(result.drift, 'none');
+          assert.equal(stderr.text(), '');
+        })().catch((error) => { console.error(error); process.exit(1); });
+        """
+    )
+
+
+def test_self_heal_reinstalls_on_mismatch():
+    assert_node_ok(
+        SELF_HEAL_FIXTURE
+        + r"""
+        (async () => {
+          const fx = makeFixture('cxpp-heal-mismatch-');
+          fs.mkdirSync(fx.installRoot, { recursive: true });
+          fs.writeFileSync(path.join(fx.installRoot, 'codex-plus-plus.exe'), 'silent-old');
+          fs.writeFileSync(path.join(fx.installRoot, 'codex-plus-plus-manager.exe'), 'manager-old');
+          fs.writeFileSync(path.join(fx.installRoot, launcher.SIDECAR_VERSION_STAMP), '1.2.5\n');
+
+          const stderr = captureStderr();
+          const result = await launcher.ensureSidecarsFresh({
+            packageRoot: fx.root,
+            installRoot: fx.installRoot,
+            platform: 'win32',
+            arch: 'x64',
+            stderr: stderr.stream,
+            env: { CODEXPP_LANG: 'en' },
+          });
+          assert.equal(result.action, 'reinstalled');
+          assert.equal(result.drift, 'mismatch');
+          assert.equal(result.before, '1.2.5');
+          assert.equal(result.after, '1.2.16');
+          assert.equal(fs.readFileSync(path.join(fx.installRoot, 'codex-plus-plus.exe'), 'utf8'), 'silent-bundled');
+          assert.equal(fs.readFileSync(path.join(fx.installRoot, launcher.SIDECAR_VERSION_STAMP), 'utf8').trim(), '1.2.16');
+          assert.match(stderr.text(), /refreshed the local sidecar/);
+          assert.match(stderr.text(), /1\.2\.5 -> 1\.2\.16/);
+        })().catch((error) => { console.error(error); process.exit(1); });
+        """
+    )
+
+
+def test_self_heal_reinstalls_on_unknown_when_stamp_missing():
+    assert_node_ok(
+        SELF_HEAL_FIXTURE
+        + r"""
+        (async () => {
+          const fx = makeFixture('cxpp-heal-unknown-');
+          fs.mkdirSync(fx.installRoot, { recursive: true });
+          fs.writeFileSync(path.join(fx.installRoot, 'codex-plus-plus.exe'), 'silent-mystery');
+          fs.writeFileSync(path.join(fx.installRoot, 'codex-plus-plus-manager.exe'), 'manager-mystery');
+          // No stamp file. spawnSync override forces the PE-version probe to "fail".
+
+          const stderr = captureStderr();
+          const result = await launcher.ensureSidecarsFresh({
+            packageRoot: fx.root,
+            installRoot: fx.installRoot,
+            platform: 'win32',
+            arch: 'x64',
+            stderr: stderr.stream,
+            env: { CODEXPP_LANG: 'en' },
+            spawnSync: () => ({ status: 1, stdout: '', stderr: '' }),
+          });
+          assert.equal(result.action, 'reinstalled');
+          assert.equal(result.drift, 'unknown');
+          assert.equal(result.before, null);
+          assert.equal(result.after, '1.2.16');
+          assert.equal(fs.readFileSync(path.join(fx.installRoot, launcher.SIDECAR_VERSION_STAMP), 'utf8').trim(), '1.2.16');
+        })().catch((error) => { console.error(error); process.exit(1); });
+        """
+    )
+
+
+def test_self_heal_reinstalls_when_sidecar_file_missing():
+    assert_node_ok(
+        SELF_HEAL_FIXTURE
+        + r"""
+        (async () => {
+          const fx = makeFixture('cxpp-heal-missing-');
+          // installRoot does not exist yet; drift = mismatch (no silent file).
+          const stderr = captureStderr();
+          const result = await launcher.ensureSidecarsFresh({
+            packageRoot: fx.root,
+            installRoot: fx.installRoot,
+            platform: 'win32',
+            arch: 'x64',
+            stderr: stderr.stream,
+            env: { CODEXPP_LANG: 'en' },
+          });
+          assert.equal(result.action, 'reinstalled');
+          assert.equal(result.drift, 'mismatch');
+          assert.ok(fs.existsSync(path.join(fx.installRoot, 'codex-plus-plus.exe')));
+        })().catch((error) => { console.error(error); process.exit(1); });
+        """
+    )
+
+
+def test_self_heal_handles_locked_old_binary_softly():
+    assert_node_ok(
+        SELF_HEAL_FIXTURE
+        + r"""
+        (async () => {
+          const fx = makeFixture('cxpp-heal-locked-');
+          fs.mkdirSync(fx.installRoot, { recursive: true });
+          fs.writeFileSync(path.join(fx.installRoot, 'codex-plus-plus.exe'), 'silent-old');
+          fs.writeFileSync(path.join(fx.installRoot, 'codex-plus-plus-manager.exe'), 'manager-old');
+          fs.writeFileSync(path.join(fx.installRoot, launcher.SIDECAR_VERSION_STAMP), '1.2.5\n');
+
+          const realFs = fs;
+          const lockedTarget = path.join(fx.installRoot, 'codex-plus-plus.exe');
+          const fakeFs = Object.assign({}, realFs, {
+            rmSync: function(target, options) {
+              if (path.resolve(target) === lockedTarget) {
+                const err = new Error('EPERM: locked');
+                err.code = 'EPERM';
+                throw err;
+              }
+              return realFs.rmSync(target, options);
+            },
+          });
+
+          const stderr = captureStderr();
+          const result = await launcher.ensureSidecarsFresh({
+            fs: fakeFs,
+            packageRoot: fx.root,
+            installRoot: fx.installRoot,
+            platform: 'win32',
+            arch: 'x64',
+            stderr: stderr.stream,
+            env: { CODEXPP_LANG: 'en' },
+            findRunningProcessesForPath: () => [{ ProcessId: 1234, Name: 'codex-plus-plus.exe' }],
+            terminateProcesses: () => {},
+          });
+          assert.equal(result.action, 'locked');
+          assert.equal(result.drift, 'mismatch');
+          assert.ok(result.error);
+          assert.equal(result.error.code, 'CODEXPP_LOCKED_OLD_BINARY');
+          assert.match(stderr.text(), /currently running/);
+          assert.equal(fs.readFileSync(lockedTarget, 'utf8'), 'silent-old');
+        })().catch((error) => { console.error(error); process.exit(1); });
+        """
+    )
+
+
+def test_self_heal_falls_back_softly_on_other_failures():
+    assert_node_ok(
+        SELF_HEAL_FIXTURE
+        + r"""
+        (async () => {
+          const fx = makeFixture('cxpp-heal-fail-');
+          fs.mkdirSync(fx.installRoot, { recursive: true });
+          fs.writeFileSync(path.join(fx.installRoot, 'codex-plus-plus.exe'), 'silent-old');
+          fs.writeFileSync(path.join(fx.installRoot, 'codex-plus-plus-manager.exe'), 'manager-old');
+          fs.writeFileSync(path.join(fx.installRoot, launcher.SIDECAR_VERSION_STAMP), '1.2.5\n');
+
+          const realFs = fs;
+          const fakeFs = Object.assign({}, realFs, {
+            copyFileSync: function() {
+              const err = new Error('ENOSPC: disk full');
+              err.code = 'ENOSPC';
+              throw err;
+            },
+          });
+
+          const stderr = captureStderr();
+          const result = await launcher.ensureSidecarsFresh({
+            fs: fakeFs,
+            packageRoot: fx.root,
+            installRoot: fx.installRoot,
+            platform: 'win32',
+            arch: 'x64',
+            stderr: stderr.stream,
+            env: { CODEXPP_LANG: 'en' },
+          });
+          assert.equal(result.action, 'failed');
+          assert.equal(result.drift, 'mismatch');
+          assert.ok(result.error);
+          assert.equal(result.error.code, 'ENOSPC');
+          assert.match(stderr.text(), /self-heal failed/);
+        })().catch((error) => { console.error(error); process.exit(1); });
+        """
+    )
+
+
+def test_self_heal_noop_on_unsupported_platform():
+    assert_node_ok(
+        SELF_HEAL_FIXTURE
+        + r"""
+        (async () => {
+          const fx = makeFixture('cxpp-heal-unsup-');
+          const stderr = captureStderr();
+          const result = await launcher.ensureSidecarsFresh({
+            packageRoot: fx.root,
+            installRoot: fx.installRoot,
+            platform: 'freebsd',
+            arch: 'x64',
+            stderr: stderr.stream,
+            env: { CODEXPP_LANG: 'en' },
+          });
+          assert.equal(result.action, 'noop');
+          assert.equal(result.drift, 'unsupported');
+          assert.equal(stderr.text(), '');
+        })().catch((error) => { console.error(error); process.exit(1); });
+        """
+    )
+
+
+def test_self_heal_does_not_run_for_doctor():
+    # Doctor must remain a read-only inspector even when drift=mismatch.
+    assert_node_ok(
+        SELF_HEAL_FIXTURE
+        + r"""
+        (async () => {
+          const fx = makeFixture('cxpp-heal-doctor-');
+          fs.mkdirSync(fx.installRoot, { recursive: true });
+          fs.writeFileSync(path.join(fx.installRoot, 'codex-plus-plus.exe'), 'silent-old');
+          fs.writeFileSync(path.join(fx.installRoot, 'codex-plus-plus-manager.exe'), 'manager-old');
+          fs.writeFileSync(path.join(fx.installRoot, launcher.SIDECAR_VERSION_STAMP), '1.2.5\n');
+          const sidecarMtimeBefore = fs.statSync(path.join(fx.installRoot, 'codex-plus-plus.exe')).mtimeMs;
+
+          // Capture stdout (doctor prints its report on stdout, not stderr).
+          const originalLog = console.log;
+          const lines = [];
+          console.log = (msg) => { lines.push(String(msg)); };
+          try {
+            const result = await launcher.runLauncher(['doctor'], {
+              packageRoot: fx.root,
+              installRoot: fx.installRoot,
+              platform: 'win32',
+              arch: 'x64',
+              env: { CODEXPP_LANG: 'en' },
+            });
+            assert.equal(result.status, 0);
+          } finally {
+            console.log = originalLog;
+          }
+          // Sidecar bytes must not have changed; stamp must still report 1.2.5.
+          assert.equal(fs.readFileSync(path.join(fx.installRoot, 'codex-plus-plus.exe'), 'utf8'), 'silent-old');
+          assert.equal(fs.readFileSync(path.join(fx.installRoot, launcher.SIDECAR_VERSION_STAMP), 'utf8').trim(), '1.2.5');
+          assert.equal(fs.statSync(path.join(fx.installRoot, 'codex-plus-plus.exe')).mtimeMs, sidecarMtimeBefore);
+        })().catch((error) => { console.error(error); process.exit(1); });
+        """
+    )

@@ -491,6 +491,94 @@ async function installSidecars(options = {}) {
   return installed;
 }
 
+function readInstalledSidecarVersion(options = {}) {
+  const fsImpl = options.fs || fs;
+  const platform = optionValue(options, 'platform', process.platform);
+  const installRoot = optionValue(options, 'installRoot', () => detectedInstallRoot(options));
+  const stampPath = path.join(installRoot, SIDECAR_VERSION_STAMP);
+  try {
+    const raw = fsImpl.readFileSync(stampPath, 'utf8');
+    const first = String(raw).split(/\r?\n/)[0].trim();
+    if (first) {
+      return first;
+    }
+  } catch (_error) {
+    // stamp absent or unreadable; fall through to platform probe
+  }
+  if (platform !== 'win32') {
+    return null;
+  }
+  const silent = installedSidecarPath('silent', { ...options, installRoot });
+  if (!fsImpl.existsSync(silent)) {
+    return null;
+  }
+  const run = options.spawnSync || spawnSync;
+  try {
+    const result = run(
+      'powershell',
+      ['-NoProfile', '-NonInteractive', '-Command', '(Get-Item -LiteralPath $args[0]).VersionInfo.FileVersion', '--', silent],
+      { encoding: 'utf8', windowsHide: true },
+    );
+    if (result && result.status === 0) {
+      const out = String(result.stdout || '').trim();
+      if (out) {
+        return out;
+      }
+    }
+  } catch (_error) {
+    // probe failed; treat as unknown
+  }
+  return null;
+}
+
+function computeSidecarDrift(options = {}) {
+  const platform = optionValue(options, 'platform', process.platform);
+  const arch = optionValue(options, 'arch', process.arch);
+  if (!SUPPORTED_PLATFORMS.has(platformKey(platform, arch))) {
+    return 'unsupported';
+  }
+  const fsImpl = options.fs || fs;
+  const installRoot = optionValue(options, 'installRoot', () => detectedInstallRoot(options));
+  const silent = installedSidecarPath('silent', { ...options, installRoot });
+  if (!fsImpl.existsSync(silent)) {
+    return 'mismatch';
+  }
+  const bundled = packageVersion(options);
+  const installed = readInstalledSidecarVersion({ ...options, installRoot });
+  if (!installed) {
+    return 'unknown';
+  }
+  return installed === bundled ? 'none' : 'mismatch';
+}
+
+async function ensureSidecarsFresh(options = {}) {
+  const drift = computeSidecarDrift(options);
+  if (drift === 'none' || drift === 'unsupported') {
+    return { action: 'noop', drift };
+  }
+  const env = options.env || process.env;
+  const before = readInstalledSidecarVersion(options);
+  const after = packageVersion(options);
+  const stderr = options.stderr || process.stderr;
+  try {
+    await installSidecars({
+      ...options,
+      promptYesNo: () => false,
+      promptYesNoWindowsPopup: () => false,
+    });
+    const arrow = before ? `${before} -> ${after}` : `-> ${after}`;
+    stderr.write(`${t('sidecarSelfHealOk', env)} (${arrow})\n`);
+    return { action: 'reinstalled', drift, before, after };
+  } catch (error) {
+    if (error && error.code === 'CODEXPP_LOCKED_OLD_BINARY') {
+      stderr.write(`${t('sidecarSelfHealLocked', env)}\n`);
+      return { action: 'locked', drift, error };
+    }
+    stderr.write(`${t('sidecarSelfHealFailed', env)}: ${(error && error.message) || String(error)}\n`);
+    return { action: 'failed', drift, error };
+  }
+}
+
 function normalizeExecutablePath(candidate) {
   return path.resolve(String(candidate || ''));
 }
@@ -1293,12 +1381,15 @@ async function runLauncher(args = [], options = {}) {
     return { status: 0 };
   }
   if (command === 'launch' || command === 'run') {
+    await ensureSidecarsFresh(options);
     const passthrough = args.slice(1);
     return spawnSidecar('silent', passthrough[0] === '--' ? passthrough.slice(1) : passthrough, options);
   }
   if (command === 'manager') {
+    await ensureSidecarsFresh(options);
     return spawnSidecar('manager', args.slice(1), options);
   }
+  await ensureSidecarsFresh(options);
   return spawnSidecar('silent', args, options);
 }
 
@@ -1307,9 +1398,11 @@ module.exports = {
   SUPPORTED_PLATFORMS,
   bundledSidecarPath,
   bundledUpstreamVersion,
+  computeSidecarDrift,
   copyReplacingChangedFile,
   defaultInstallRoot,
   doctorReport,
+  ensureSidecarsFresh,
   executableName,
   filesMatch,
   findRunningProcessesForPath,
@@ -1326,6 +1419,7 @@ module.exports = {
   macAppRoot,
   platformKey,
   promptYesNoWindowsPopup,
+  readInstalledSidecarVersion,
   removePath,
   runLauncher,
   spawnSidecar,

@@ -18,6 +18,9 @@ const messages = {
     shortcutInstallFailed: '创建 Codex++ 快捷方式失败',
     retryingMirror: '直连失败，正在尝试 GitHub 镜像',
     retryingForceReinstall: '检测到损坏的 pip 安装记录，正在尝试跳过卸载直接覆盖安装',
+    sidecarSelfHealOk: 'Codex++: 已自动更新本地 sidecar',
+    sidecarSelfHealLocked: 'Codex++: 检测到本地 sidecar 与 npm 版本不一致，但当前正在运行；本次仍使用旧版启动。请退出 Codex 后重新执行 cxpp launch 完成升级。',
+    sidecarSelfHealFailed: 'Codex++: sidecar 自愈失败，仍使用旧版启动',
   },
   en: {
     missingPython: 'missing command: python3, python, or py',
@@ -38,6 +41,9 @@ const messages = {
     shortcutInstallFailed: 'failed to create Codex++ shortcuts',
     retryingMirror: 'direct GitHub download failed, retrying with mirrors',
     retryingForceReinstall: 'detected a broken pip installation record, retrying without uninstall',
+    sidecarSelfHealOk: 'Codex++: refreshed the local sidecar to match the npm package',
+    sidecarSelfHealLocked: 'Codex++: the local sidecar is out of date but is currently running; using the old version for this launch. Quit Codex and re-run cxpp launch to finish the upgrade.',
+    sidecarSelfHealFailed: 'Codex++: sidecar self-heal failed, falling back to the old version',
   },
 };
 
