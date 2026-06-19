@@ -14,6 +14,8 @@ from codex_plus_plus_launcher.runtime import (
     legacy_auto_inject_state,
     load_install_state,
     runtime_paths,
+    shortcut_sidecar_install_root,
+    shortcut_sidecar_version,
 )
 
 
@@ -31,15 +33,34 @@ def find_codex_binary() -> str | None:
     return None
 
 
+def _sidecar_drift_value(installed: str | None, bundled: str | None) -> str:
+    """Compute the sidecar_drift status surfaced by doctor.
+
+    - "none": both versions are known and equal
+    - "mismatch:installed=X,bundled=Y": both known but different
+    - "unknown": either version is missing (older install / preflight running
+      from source tree without bundled sidecar)
+    """
+    if not installed or not bundled:
+        return "unknown"
+    if installed == bundled:
+        return "none"
+    return f"mismatch:installed={installed},bundled={bundled}"
+
+
 def doctor_report(paths: RuntimePaths | None = None) -> dict[str, str]:
     resolved_paths = paths or runtime_paths()
     installation = detect_codex_installation()
     state = load_install_state(resolved_paths)
 
+    bundled_version = bundled_upstream_version()
+    installed_sidecar_version = shortcut_sidecar_version()
+    sidecar_root = shortcut_sidecar_install_root()
+
     report = {
         "platform": sys.platform,
         "package_version": installed_package_version(),
-        "bundled_upstream_version": bundled_upstream_version() or "missing",
+        "bundled_upstream_version": bundled_version or "missing",
         "global_command_version": global_command_version() or "missing",
         "host_python": find_host_python() or "missing",
         "codex_binary": find_codex_binary() or "missing",
@@ -50,6 +71,9 @@ def doctor_report(paths: RuntimePaths | None = None) -> dict[str, str]:
         "shortcut_state": str(state.get("shortcut_state") or "missing"),
         "start_menu_state": str(state.get("start_menu_state") or "missing"),
         "legacy_auto_inject": str(state.get("legacy_auto_inject_state") or legacy_auto_inject_state()),
+        "shortcut_sidecar_root": str(sidecar_root) if sidecar_root is not None else "missing",
+        "shortcut_sidecar_version": installed_sidecar_version or "unknown",
+        "sidecar_drift": _sidecar_drift_value(installed_sidecar_version, bundled_version),
     }
     if sys.platform == "win32":
         report["windows_app_dir"] = find_windows_codex_app_dir() or "missing"

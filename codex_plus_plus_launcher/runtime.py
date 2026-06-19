@@ -590,6 +590,112 @@ def binary_version_from_path(path: Path | None) -> str | None:
     return None
 
 
+SIDECAR_VERSION_STAMP_NAME = ".codexpp-sidecar-version"
+
+
+def shortcut_sidecar_install_root() -> Path | None:
+    """Return the directory where the npm postinstall copied the sidecar.
+
+    Mirrors `installSidecarRoot` in npm/launcher.js. Used by doctor() to read
+    the stamp file written alongside the sidecar binary.
+    """
+    if sys.platform == "win32":
+        local = os.environ.get("LOCALAPPDATA")
+        if not local:
+            return None
+        return Path(local) / "Programs" / "Codex++"
+    if sys.platform == "darwin":
+        primary = Path("/Applications")
+        if (primary / SIDECAR_VERSION_STAMP_NAME).is_file() or (primary / "codex-plus-plus").is_file():
+            return primary
+        fallback = Path.home() / "Applications"
+        if (fallback / SIDECAR_VERSION_STAMP_NAME).is_file() or (fallback / "codex-plus-plus").is_file():
+            return fallback
+        return primary
+    xdg = os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local" / "share")
+    return Path(xdg) / "Codex++"
+
+
+def shortcut_sidecar_binary(root: Path | None = None) -> Path | None:
+    base = root if root is not None else shortcut_sidecar_install_root()
+    if base is None:
+        return None
+    name = "codex-plus-plus.exe" if sys.platform == "win32" else "codex-plus-plus"
+    candidate = base / name
+    return candidate if candidate.is_file() else None
+
+
+def _read_sidecar_version_stamp(root: Path) -> str | None:
+    stamp = root / SIDECAR_VERSION_STAMP_NAME
+    try:
+        text = stamp.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+    value = text.strip()
+    return value or None
+
+
+def _read_pe_file_version(path: Path) -> str | None:
+    """Windows-only fallback: read FileVersion from the PE VS_FIXEDFILEINFO block.
+
+    Used when an older npm install root predates the stamp file. No new
+    dependencies — calls into version.dll via ctypes.
+    """
+    if sys.platform != "win32":
+        return None
+    try:
+        import ctypes
+        from ctypes import wintypes
+    except Exception:
+        return None
+    try:
+        version_dll = ctypes.WinDLL("version", use_last_error=True)
+    except OSError:
+        return None
+    target = str(path)
+    try:
+        size = version_dll.GetFileVersionInfoSizeW(target, None)
+        if not size:
+            return None
+        buffer = ctypes.create_string_buffer(size)
+        if not version_dll.GetFileVersionInfoW(target, 0, size, buffer):
+            return None
+        block_ptr = ctypes.c_void_p()
+        block_size = wintypes.UINT()
+        if not version_dll.VerQueryValueW(buffer, "\\", ctypes.byref(block_ptr), ctypes.byref(block_size)):
+            return None
+        if block_size.value < 16:
+            return None
+        raw = ctypes.string_at(block_ptr, block_size.value)
+        ms = int.from_bytes(raw[8:12], "little")
+        ls = int.from_bytes(raw[12:16], "little")
+    except Exception:
+        return None
+    parts = [ms >> 16, ms & 0xFFFF, ls >> 16, ls & 0xFFFF]
+    while len(parts) > 1 and parts[-1] == 0:
+        parts.pop()
+    return ".".join(str(part) for part in parts) or None
+
+
+def shortcut_sidecar_version() -> str | None:
+    """Return the version of the installed sidecar copy, or None when unknown.
+
+    Prefers a stamp file written by npm postinstall (cross-platform). Falls
+    back to the PE VersionInfo on Windows for installs that predate the stamp.
+    """
+    root = shortcut_sidecar_install_root()
+    if root is None:
+        return None
+    stamp_version = _read_sidecar_version_stamp(root)
+    if stamp_version:
+        return stamp_version
+    if sys.platform == "win32":
+        binary = shortcut_sidecar_binary(root)
+        if binary is not None:
+            return _read_pe_file_version(binary)
+    return None
+
+
 def global_binary_candidate_dirs(current_binary: Path | None = None) -> list[Path]:
     candidate_dirs: list[Path] = []
     if current_binary is not None:

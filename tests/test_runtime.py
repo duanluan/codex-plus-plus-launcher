@@ -507,3 +507,82 @@ def test_restart_codex_app_stops_then_starts(monkeypatch, tmp_path):
 
     assert runtime.restart_codex_app(installation) is True
     assert calls == ["stop", "start"]
+
+
+def test_shortcut_sidecar_install_root_uses_localappdata_on_windows(monkeypatch, tmp_path):
+    monkeypatch.setattr(runtime.sys, "platform", "win32")
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+
+    root = runtime.shortcut_sidecar_install_root()
+
+    assert root == tmp_path / "Programs" / "Codex++"
+
+
+def test_shortcut_sidecar_install_root_returns_none_without_localappdata(monkeypatch):
+    monkeypatch.setattr(runtime.sys, "platform", "win32")
+    monkeypatch.delenv("LOCALAPPDATA", raising=False)
+
+    assert runtime.shortcut_sidecar_install_root() is None
+
+
+def test_shortcut_sidecar_install_root_uses_xdg_data_home_on_linux(monkeypatch, tmp_path):
+    monkeypatch.setattr(runtime.sys, "platform", "linux")
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
+
+    assert runtime.shortcut_sidecar_install_root() == tmp_path / "xdg" / "Codex++"
+
+
+def test_shortcut_sidecar_install_root_macos_falls_back_to_user_applications(monkeypatch, tmp_path):
+    monkeypatch.setattr(runtime.sys, "platform", "darwin")
+    fallback = tmp_path / "home" / "Applications"
+    fallback.mkdir(parents=True)
+    (fallback / runtime.SIDECAR_VERSION_STAMP_NAME).write_text("1.2.16\n", encoding="utf-8")
+    monkeypatch.setattr(runtime.Path, "home", classmethod(lambda cls: tmp_path / "home"))
+
+    root = runtime.shortcut_sidecar_install_root()
+
+    assert root == fallback
+
+
+def test_shortcut_sidecar_version_prefers_stamp_over_pe_probe(monkeypatch, tmp_path):
+    monkeypatch.setattr(runtime.sys, "platform", "win32")
+    install_root = tmp_path / "Programs" / "Codex++"
+    install_root.mkdir(parents=True)
+    (install_root / runtime.SIDECAR_VERSION_STAMP_NAME).write_text("1.2.16\n", encoding="utf-8")
+    monkeypatch.setattr(runtime, "shortcut_sidecar_install_root", lambda: install_root)
+
+    def _fail(_path):
+        raise AssertionError("PE probe should not run when stamp exists")
+
+    monkeypatch.setattr(runtime, "_read_pe_file_version", _fail)
+
+    assert runtime.shortcut_sidecar_version() == "1.2.16"
+
+
+def test_shortcut_sidecar_version_falls_back_to_pe_probe_when_stamp_missing(monkeypatch, tmp_path):
+    monkeypatch.setattr(runtime.sys, "platform", "win32")
+    install_root = tmp_path / "Programs" / "Codex++"
+    install_root.mkdir(parents=True)
+    binary = install_root / "codex-plus-plus.exe"
+    binary.write_text("", encoding="utf-8")
+    monkeypatch.setattr(runtime, "shortcut_sidecar_install_root", lambda: install_root)
+    monkeypatch.setattr(runtime, "_read_pe_file_version", lambda path: "1.2.5" if path == binary else None)
+
+    assert runtime.shortcut_sidecar_version() == "1.2.5"
+
+
+def test_shortcut_sidecar_version_returns_none_when_root_missing(monkeypatch):
+    monkeypatch.setattr(runtime, "shortcut_sidecar_install_root", lambda: None)
+
+    assert runtime.shortcut_sidecar_version() is None
+
+
+def test_shortcut_sidecar_version_returns_none_when_stamp_blank(monkeypatch, tmp_path):
+    monkeypatch.setattr(runtime.sys, "platform", "linux")
+    install_root = tmp_path / "Codex++"
+    install_root.mkdir()
+    (install_root / runtime.SIDECAR_VERSION_STAMP_NAME).write_text("   \n", encoding="utf-8")
+    monkeypatch.setattr(runtime, "shortcut_sidecar_install_root", lambda: install_root)
+
+    # Linux has no PE fallback, so blank stamp should bubble up as None.
+    assert runtime.shortcut_sidecar_version() is None

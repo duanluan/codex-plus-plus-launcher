@@ -424,6 +424,119 @@ def test_linux_appimage_appdir_detection_creates_shim():
     )
 
 
+def test_install_sidecars_writes_version_stamp():
+    assert_node_ok(
+        r"""
+        const assert = require('node:assert/strict');
+        const fs = require('node:fs');
+        const os = require('node:os');
+        const path = require('node:path');
+        const launcher = require('./npm/launcher.js');
+
+        const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cxpp-stamp-'));
+        const installRoot = path.join(root, 'install');
+        fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ version: '1.2.16' }));
+        fs.mkdirSync(path.join(root, 'upstream-bin', 'win32-x64'), { recursive: true });
+        fs.writeFileSync(path.join(root, 'upstream-bin', 'upstream-release.json'), JSON.stringify({ version: 'v1.1.7' }));
+        fs.writeFileSync(path.join(root, 'upstream-bin', 'win32-x64', 'codex-plus-plus.exe'), 'silent');
+        fs.writeFileSync(path.join(root, 'upstream-bin', 'win32-x64', 'codex-plus-plus-manager.exe'), 'manager');
+        fs.writeFileSync(path.join(root, 'upstream-bin', 'win32-x64', 'codex-plus-plus.ico'), 'icon');
+
+        (async () => {
+          await launcher.installSidecars({ packageRoot: root, installRoot, platform: 'win32', arch: 'x64' });
+          const stamp = fs.readFileSync(path.join(installRoot, launcher.SIDECAR_VERSION_STAMP), 'utf8');
+          assert.equal(stamp.trim(), '1.2.16');
+        })().catch((error) => {
+          console.error(error);
+          process.exit(1);
+        });
+        """
+    )
+
+
+def test_install_sidecars_refreshes_version_stamp_on_upgrade():
+    assert_node_ok(
+        r"""
+        const assert = require('node:assert/strict');
+        const fs = require('node:fs');
+        const os = require('node:os');
+        const path = require('node:path');
+        const launcher = require('./npm/launcher.js');
+
+        const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cxpp-stamp-upgrade-'));
+        const installRoot = path.join(root, 'install');
+        fs.mkdirSync(installRoot, { recursive: true });
+        fs.writeFileSync(path.join(installRoot, launcher.SIDECAR_VERSION_STAMP), '1.2.5\n');
+        fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ version: '1.2.16' }));
+        fs.mkdirSync(path.join(root, 'upstream-bin', 'win32-x64'), { recursive: true });
+        fs.writeFileSync(path.join(root, 'upstream-bin', 'upstream-release.json'), JSON.stringify({ version: 'v1.1.7' }));
+        fs.writeFileSync(path.join(root, 'upstream-bin', 'win32-x64', 'codex-plus-plus.exe'), 'silent');
+        fs.writeFileSync(path.join(root, 'upstream-bin', 'win32-x64', 'codex-plus-plus-manager.exe'), 'manager');
+        fs.writeFileSync(path.join(root, 'upstream-bin', 'win32-x64', 'codex-plus-plus.ico'), 'icon');
+
+        (async () => {
+          await launcher.installSidecars({ packageRoot: root, installRoot, platform: 'win32', arch: 'x64' });
+          const stamp = fs.readFileSync(path.join(installRoot, launcher.SIDECAR_VERSION_STAMP), 'utf8');
+          assert.equal(stamp.trim(), '1.2.16');
+        })().catch((error) => {
+          console.error(error);
+          process.exit(1);
+        });
+        """
+    )
+
+
+def test_install_sidecars_stamp_failure_is_nonfatal():
+    # Best-effort stamp: if the filesystem rejects the write, postinstall must not crash.
+    assert_node_ok(
+        r"""
+        const assert = require('node:assert/strict');
+        const fs = require('node:fs');
+        const os = require('node:os');
+        const path = require('node:path');
+        const launcher = require('./npm/launcher.js');
+
+        const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cxpp-stamp-nonfatal-'));
+        const installRoot = path.join(root, 'install');
+        fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ version: '1.2.16' }));
+        fs.mkdirSync(path.join(root, 'upstream-bin', 'win32-x64'), { recursive: true });
+        fs.writeFileSync(path.join(root, 'upstream-bin', 'upstream-release.json'), JSON.stringify({ version: 'v1.1.7' }));
+        fs.writeFileSync(path.join(root, 'upstream-bin', 'win32-x64', 'codex-plus-plus.exe'), 'silent');
+        fs.writeFileSync(path.join(root, 'upstream-bin', 'win32-x64', 'codex-plus-plus-manager.exe'), 'manager');
+        fs.writeFileSync(path.join(root, 'upstream-bin', 'win32-x64', 'codex-plus-plus.ico'), 'icon');
+
+        const stampPath = path.join(installRoot, launcher.SIDECAR_VERSION_STAMP);
+        const fakeFs = {
+          ...fs,
+          writeFileSync(target, data, options) {
+            if (target === stampPath) {
+              const error = new Error('locked');
+              error.code = 'EBUSY';
+              throw error;
+            }
+            return fs.writeFileSync(target, data, options);
+          },
+        };
+
+        (async () => {
+          const result = await launcher.installSidecars({
+            fs: fakeFs,
+            packageRoot: root,
+            installRoot,
+            platform: 'win32',
+            arch: 'x64',
+          });
+          assert.equal(result.installRoot, installRoot);
+          assert.ok(fs.existsSync(path.join(installRoot, 'codex-plus-plus.exe')));
+          assert.ok(!fs.existsSync(stampPath));
+        })().catch((error) => {
+          console.error(error);
+          process.exit(1);
+        });
+        """
+    )
+
+
 def test_linux_launch_uses_silent_sidecar_and_auto_app_path():
     assert_node_ok(
         r"""

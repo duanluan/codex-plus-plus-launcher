@@ -8,6 +8,7 @@ const { t } = require('./i18n.js');
 const SUPPORTED_PLATFORMS = new Set(['win32-x64', 'darwin-x64', 'darwin-arm64', 'linux-x64']);
 const SILENT_BINARY = 'codex-plus-plus';
 const MANAGER_BINARY = 'codex-plus-plus-manager';
+const SIDECAR_VERSION_STAMP = '.codexpp-sidecar-version';
 const SILENT_NAME = 'Codex++';
 const MANAGER_NAME = 'Codex++ 管理工具';
 const LINUX_SHIM_DIR_NAME = 'codex-desktop-linux-shim';
@@ -477,6 +478,14 @@ async function installSidecars(options = {}) {
     const iconTarget = path.join(installRoot, path.basename(icon));
     fsImpl.copyFileSync(icon, iconTarget);
     installed.icon = iconTarget;
+  }
+  try {
+    fsImpl.writeFileSync(
+      path.join(installRoot, SIDECAR_VERSION_STAMP),
+      packageVersion(options) + '\n',
+    );
+  } catch (_error) {
+    // Stamp is best-effort; doctor will fall back to platform probes.
   }
   installed.installRoot = installRoot;
   return installed;
@@ -1294,6 +1303,7 @@ async function runLauncher(args = [], options = {}) {
 }
 
 module.exports = {
+  SIDECAR_VERSION_STAMP,
   SUPPORTED_PLATFORMS,
   bundledSidecarPath,
   bundledUpstreamVersion,
