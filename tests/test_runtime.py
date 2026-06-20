@@ -336,7 +336,7 @@ def test_install_windows_shortcuts_creates_desktop_and_start_menu_entries(monkey
     assert result.shortcut_target == Path(r"C:\Windows\System32\wscript.exe")
     assert result.shortcut_launcher == paths.assets_dir / "launch-codexpp.vbs"
     assert result.legacy_auto_inject_state == "removed"
-    assert result.expected_launcher_version == "1.2.16"
+    assert result.expected_launcher_version == "1.2.17"
     assert result.global_command_version == "0.1.10"
     assert result.shortcut_binary_version == "0.1.5"
     assert result.stale_global_binaries == "none"
@@ -395,7 +395,7 @@ def test_install_windows_shortcuts_can_skip_real_shortcut_creation(monkeypatch, 
 
     assert result.shortcut_state == "skipped"
     assert result.start_menu_state == "skipped"
-    assert result.expected_launcher_version == "1.2.16"
+    assert result.expected_launcher_version == "1.2.17"
     assert result.stale_global_binaries == "none"
 
 
@@ -536,7 +536,7 @@ def test_shortcut_sidecar_install_root_macos_falls_back_to_user_applications(mon
     monkeypatch.setattr(runtime.sys, "platform", "darwin")
     fallback = tmp_path / "home" / "Applications"
     fallback.mkdir(parents=True)
-    (fallback / runtime.SIDECAR_VERSION_STAMP_NAME).write_text("1.2.16\n", encoding="utf-8")
+    (fallback / runtime.SIDECAR_VERSION_STAMP_NAME).write_text("1.2.17\n", encoding="utf-8")
     monkeypatch.setattr(runtime.Path, "home", classmethod(lambda cls: tmp_path / "home"))
 
     root = runtime.shortcut_sidecar_install_root()
@@ -548,7 +548,7 @@ def test_shortcut_sidecar_version_prefers_stamp_over_pe_probe(monkeypatch, tmp_p
     monkeypatch.setattr(runtime.sys, "platform", "win32")
     install_root = tmp_path / "Programs" / "Codex++"
     install_root.mkdir(parents=True)
-    (install_root / runtime.SIDECAR_VERSION_STAMP_NAME).write_text("1.2.16\n", encoding="utf-8")
+    (install_root / runtime.SIDECAR_VERSION_STAMP_NAME).write_text("1.2.17\n", encoding="utf-8")
     monkeypatch.setattr(runtime, "shortcut_sidecar_install_root", lambda: install_root)
 
     def _fail(_path):
@@ -556,7 +556,7 @@ def test_shortcut_sidecar_version_prefers_stamp_over_pe_probe(monkeypatch, tmp_p
 
     monkeypatch.setattr(runtime, "_read_pe_file_version", _fail)
 
-    assert runtime.shortcut_sidecar_version() == "1.2.16"
+    assert runtime.shortcut_sidecar_version() == "1.2.17"
 
 
 def test_shortcut_sidecar_version_falls_back_to_pe_probe_when_stamp_missing(monkeypatch, tmp_path):
@@ -586,3 +586,4 @@ def test_shortcut_sidecar_version_returns_none_when_stamp_blank(monkeypatch, tmp
 
     # Linux has no PE fallback, so blank stamp should bubble up as None.
     assert runtime.shortcut_sidecar_version() is None
+

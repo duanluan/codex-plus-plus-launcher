@@ -847,7 +847,7 @@ def test_install_sidecars_writes_version_stamp():
 
         const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cxpp-stamp-'));
         const installRoot = path.join(root, 'install');
-        fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ version: '1.2.16' }));
+        fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ version: '1.2.17' }));
         fs.mkdirSync(path.join(root, 'upstream-bin', 'win32-x64'), { recursive: true });
         fs.writeFileSync(path.join(root, 'upstream-bin', 'upstream-release.json'), JSON.stringify({ version: 'v1.1.7' }));
         fs.writeFileSync(path.join(root, 'upstream-bin', 'win32-x64', 'codex-plus-plus.exe'), 'silent');
@@ -857,7 +857,7 @@ def test_install_sidecars_writes_version_stamp():
         (async () => {
           await launcher.installSidecars({ packageRoot: root, installRoot, platform: 'win32', arch: 'x64' });
           const stamp = fs.readFileSync(path.join(installRoot, launcher.SIDECAR_VERSION_STAMP), 'utf8');
-          assert.equal(stamp.trim(), '1.2.16');
+          assert.equal(stamp.trim(), '1.2.17');
         })().catch((error) => {
           console.error(error);
           process.exit(1);
@@ -879,7 +879,7 @@ def test_install_sidecars_refreshes_version_stamp_on_upgrade():
         const installRoot = path.join(root, 'install');
         fs.mkdirSync(installRoot, { recursive: true });
         fs.writeFileSync(path.join(installRoot, launcher.SIDECAR_VERSION_STAMP), '1.2.5\n');
-        fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ version: '1.2.16' }));
+        fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ version: '1.2.17' }));
         fs.mkdirSync(path.join(root, 'upstream-bin', 'win32-x64'), { recursive: true });
         fs.writeFileSync(path.join(root, 'upstream-bin', 'upstream-release.json'), JSON.stringify({ version: 'v1.1.7' }));
         fs.writeFileSync(path.join(root, 'upstream-bin', 'win32-x64', 'codex-plus-plus.exe'), 'silent');
@@ -889,7 +889,7 @@ def test_install_sidecars_refreshes_version_stamp_on_upgrade():
         (async () => {
           await launcher.installSidecars({ packageRoot: root, installRoot, platform: 'win32', arch: 'x64' });
           const stamp = fs.readFileSync(path.join(installRoot, launcher.SIDECAR_VERSION_STAMP), 'utf8');
-          assert.equal(stamp.trim(), '1.2.16');
+          assert.equal(stamp.trim(), '1.2.17');
         })().catch((error) => {
           console.error(error);
           process.exit(1);
@@ -910,7 +910,7 @@ def test_install_sidecars_stamp_failure_is_nonfatal():
 
         const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cxpp-stamp-nonfatal-'));
         const installRoot = path.join(root, 'install');
-        fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ version: '1.2.16' }));
+        fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ version: '1.2.17' }));
         fs.mkdirSync(path.join(root, 'upstream-bin', 'win32-x64'), { recursive: true });
         fs.writeFileSync(path.join(root, 'upstream-bin', 'upstream-release.json'), JSON.stringify({ version: 'v1.1.7' }));
         fs.writeFileSync(path.join(root, 'upstream-bin', 'win32-x64', 'codex-plus-plus.exe'), 'silent');
@@ -1054,7 +1054,7 @@ function makeFixture(prefix, opts) {
   const platform = opts.platform || 'win32';
   const arch = opts.arch || 'x64';
   const platDir = platform + '-' + arch;
-  const packageVersion = opts.packageVersion || '1.2.16';
+  const packageVersion = opts.packageVersion || '1.2.17';
   fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ version: packageVersion }));
   fs.mkdirSync(path.join(root, 'upstream-bin', platDir), { recursive: true });
   fs.writeFileSync(path.join(root, 'upstream-bin', 'upstream-release.json'), JSON.stringify({ version: 'v1.1.7' }));
@@ -1086,7 +1086,7 @@ def test_self_heal_noop_when_drift_is_none():
           fs.mkdirSync(fx.installRoot, { recursive: true });
           fs.writeFileSync(path.join(fx.installRoot, 'codex-plus-plus.exe'), 'silent-bundled');
           fs.writeFileSync(path.join(fx.installRoot, 'codex-plus-plus-manager.exe'), 'manager-bundled');
-          fs.writeFileSync(path.join(fx.installRoot, launcher.SIDECAR_VERSION_STAMP), '1.2.16\n');
+          fs.writeFileSync(path.join(fx.installRoot, launcher.SIDECAR_VERSION_STAMP), '1.2.17\n');
 
           const stderr = captureStderr();
           const result = await launcher.ensureSidecarsFresh({
@@ -1128,11 +1128,11 @@ def test_self_heal_reinstalls_on_mismatch():
           assert.equal(result.action, 'reinstalled');
           assert.equal(result.drift, 'mismatch');
           assert.equal(result.before, '1.2.5');
-          assert.equal(result.after, '1.2.16');
+          assert.equal(result.after, '1.2.17');
           assert.equal(fs.readFileSync(path.join(fx.installRoot, 'codex-plus-plus.exe'), 'utf8'), 'silent-bundled');
-          assert.equal(fs.readFileSync(path.join(fx.installRoot, launcher.SIDECAR_VERSION_STAMP), 'utf8').trim(), '1.2.16');
+          assert.equal(fs.readFileSync(path.join(fx.installRoot, launcher.SIDECAR_VERSION_STAMP), 'utf8').trim(), '1.2.17');
           assert.match(stderr.text(), /refreshed the local sidecar/);
-          assert.match(stderr.text(), /1\.2\.5 -> 1\.2\.16/);
+          assert.match(stderr.text(), /1\.2\.5 -> 1\.2\.17/);
         })().catch((error) => { console.error(error); process.exit(1); });
         """
     )
@@ -1162,8 +1162,8 @@ def test_self_heal_reinstalls_on_unknown_when_stamp_missing():
           assert.equal(result.action, 'reinstalled');
           assert.equal(result.drift, 'unknown');
           assert.equal(result.before, null);
-          assert.equal(result.after, '1.2.16');
-          assert.equal(fs.readFileSync(path.join(fx.installRoot, launcher.SIDECAR_VERSION_STAMP), 'utf8').trim(), '1.2.16');
+          assert.equal(result.after, '1.2.17');
+          assert.equal(fs.readFileSync(path.join(fx.installRoot, launcher.SIDECAR_VERSION_STAMP), 'utf8').trim(), '1.2.17');
         })().catch((error) => { console.error(error); process.exit(1); });
         """
     )
@@ -1339,3 +1339,4 @@ def test_self_heal_does_not_run_for_doctor():
         })().catch((error) => { console.error(error); process.exit(1); });
         """
     )
+

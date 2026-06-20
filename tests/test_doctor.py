@@ -86,8 +86,8 @@ def _stub_doctor_dependencies(monkeypatch, tmp_path):
     monkeypatch.setattr(doctor.sys, "platform", "win32")
     monkeypatch.setattr(doctor, "find_host_python", lambda: "python")
     monkeypatch.setattr(doctor, "find_codex_binary", lambda: None)
-    monkeypatch.setattr(doctor, "installed_package_version", lambda: "1.2.16")
-    monkeypatch.setattr(doctor, "global_command_version", lambda: "1.2.16")
+    monkeypatch.setattr(doctor, "installed_package_version", lambda: "1.2.17")
+    monkeypatch.setattr(doctor, "global_command_version", lambda: "1.2.17")
     monkeypatch.setattr(doctor, "legacy_auto_inject_state", lambda: "removed")
     monkeypatch.setattr(doctor, "find_windows_codex_app_dir", lambda: None)
     monkeypatch.setattr(
@@ -105,20 +105,20 @@ def _stub_doctor_dependencies(monkeypatch, tmp_path):
 
 def test_doctor_report_flags_sidecar_drift_when_versions_differ(monkeypatch, tmp_path):
     paths = _stub_doctor_dependencies(monkeypatch, tmp_path)
-    monkeypatch.setattr(doctor, "bundled_upstream_version", lambda: "1.2.16")
+    monkeypatch.setattr(doctor, "bundled_upstream_version", lambda: "1.2.17")
     monkeypatch.setattr(doctor, "shortcut_sidecar_install_root", lambda: tmp_path / "Programs" / "Codex++")
     monkeypatch.setattr(doctor, "shortcut_sidecar_version", lambda: "1.2.5")
 
     report = doctor.doctor_report(paths)
 
     assert report["shortcut_sidecar_version"] == "1.2.5"
-    assert report["bundled_upstream_version"] == "1.2.16"
-    assert report["sidecar_drift"] == "mismatch:installed=1.2.5,bundled=1.2.16"
+    assert report["bundled_upstream_version"] == "1.2.17"
+    assert report["sidecar_drift"] == "mismatch:installed=1.2.5,bundled=1.2.17"
 
 
 def test_doctor_report_marks_drift_unknown_when_installed_version_missing(monkeypatch, tmp_path):
     paths = _stub_doctor_dependencies(monkeypatch, tmp_path)
-    monkeypatch.setattr(doctor, "bundled_upstream_version", lambda: "1.2.16")
+    monkeypatch.setattr(doctor, "bundled_upstream_version", lambda: "1.2.17")
     monkeypatch.setattr(doctor, "shortcut_sidecar_install_root", lambda: None)
     monkeypatch.setattr(doctor, "shortcut_sidecar_version", lambda: None)
 
@@ -140,3 +140,4 @@ def test_doctor_report_marks_drift_unknown_when_bundled_version_missing(monkeypa
     assert report["bundled_upstream_version"] == "missing"
     assert report["shortcut_sidecar_version"] == "1.2.5"
     assert report["sidecar_drift"] == "unknown"
+

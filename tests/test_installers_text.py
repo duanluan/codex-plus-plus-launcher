@@ -108,7 +108,7 @@ def test_smoke_install_uses_current_package_version_tarball():
 def test_package_exposes_only_explicit_commands():
     content = Path("package.json").read_text(encoding="utf-8")
 
-    assert '"version": "1.2.16"' in content
+    assert '"version": "1.2.17"' in content
     assert '"codex_plus_plus_launcher/*.py"' in content
     assert '"codex_plus_plus_launcher/assets/*"' in content
     assert '"upstream-bin/**"' in content
@@ -161,3 +161,4 @@ def test_readme_explains_wrapper_owns_upstream_updates():
     assert "codex-desktop-linux" in content_en
     assert "codex.exe" in content_en
     assert "Codex++ Manager is not bundled on Linux yet" in content_en
+
