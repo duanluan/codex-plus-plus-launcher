@@ -132,6 +132,19 @@ def test_npm_includes_aur_plugin_unlock_fix():
     assert "plugin-auth-*.js" in launcher
 
 
+def test_plugin_nav_unlock_patch_keeps_contextual_hunks():
+    patch = Path("patches/codex-plus-plus-plugin-unlock.patch").read_text(encoding="utf-8")
+    renderer_patch = patch.split("diff --git a/crates/codex-plus-core/src/bridge.rs", 1)[0]
+
+    assert "@@ -2702,6 +2703,160 @@" in renderer_patch
+    assert "@@ -2704,0 +2706,153 @@" not in renderer_patch
+    assert "+  function pluginNavButtonCandidates()" in renderer_patch
+    assert " function restorePluginMarketplaceName(name) {" in renderer_patch
+    assert renderer_patch.index("+  function pluginNavButtonCandidates()") < renderer_patch.index(
+        " function restorePluginMarketplaceName(name) {"
+    )
+
+
 def test_readme_explains_wrapper_owns_upstream_updates():
     content = Path("README.md").read_text(encoding="utf-8")
     content_en = Path("README_EN.md").read_text(encoding="utf-8")

@@ -2,9 +2,18 @@ diff --git a/assets/inject/renderer-inject.js b/assets/inject/renderer-inject.js
 index fa775b1..920c25e 100644
 --- a/assets/inject/renderer-inject.js
 +++ b/assets/inject/renderer-inject.js
-@@ -69,0 +70 @@
+@@ -67,6 +67,7 @@
+   const codexServiceTierRequestOverrideVersion = "3";
+   const codexAppServerModelRequestPatchVersion = "1";
+   const codexPluginMarketplaceUnlockVersion = "10";
 +  const codexPluginNavUnlockVersion = "2";
-@@ -2704,0 +2706,153 @@
+   const codexThreadScrollMaxEntries = 120;
+   const codexThreadScrollSaveThrottleMs = 120;
+   const codexThreadScrollRestoreWindowMs = 3200;
+@@ -2702,6 +2703,160 @@
+     return true;
+   }
+ 
 +  function pluginNavButtonCandidates() {
 +    return Array.from(document.querySelectorAll(selectors.pluginNavButton))
 +      .filter((button) => button instanceof HTMLElement && isPluginNavButton(button));
@@ -158,23 +167,47 @@ index fa775b1..920c25e 100644
 +      unlockPluginNavButtons();
 +    }, codexForcePluginInstallRefreshIntervalMs);
 +  }
-@@ -7661,0 +7817,2 @@
++
+   function restorePluginMarketplaceName(name) {
+     if (name === "codex-plus-openai-bundled") return "openai-bundled";
+     if (name === "codex-plus-openai-curated") return "openai-curated";
+@@ -7659,6 +7814,8 @@
+     installStyle();
+     installCodexServiceTierDispatcherPatch();
+     installCodexPlusMenu();
 +    unlockPluginNavButtons();
 +    refreshPluginNavUnlockLoop();
-@@ -8324,0 +8482 @@
+     scheduleBackendHeartbeat();
+     installDeleteButtonEventDelegation();
+     updateThreadScrollHandlers();
+@@ -8322,6 +8479,7 @@
+       ".composer-footer",
+       selectors.appHeader,
+       selectors.archiveNav,
 +      selectors.pluginNavButton,
+       ...(pluginPatchDisabledInRelayMode() ? [] : [selectors.disabledInstallButton]),
+     ].join(", ");
+   }
 diff --git a/crates/codex-plus-core/src/bridge.rs b/crates/codex-plus-core/src/bridge.rs
 index 52ea388..b903025 100644
 --- a/crates/codex-plus-core/src/bridge.rs
 +++ b/crates/codex-plus-core/src/bridge.rs
-@@ -59,0 +60,2 @@ pub fn bridge_health_check_script() -> &'static str {
+@@ -57,6 +57,8 @@ pub fn bridge_health_check_script() -> &'static str {
+ (() => {
+   const bridge = window.__codexSessionDeleteBridge;
+   if (typeof bridge !== "function") return false;
 +  if (!window.__CODEX_PLUS_VERSION__) return false;
 +  if (!document.querySelector('#codex-plus-menu, [data-codex-plus-menu="true"]')) return false;
+   try {
+     return Promise.race([
+       Promise.resolve(bridge("/backend/status", {})).then((result) => !!result && result.status === "ok"),
 diff --git a/crates/codex-plus-core/src/ports.rs b/crates/codex-plus-core/src/ports.rs
 index cfa4933..5d33223 100644
 --- a/crates/codex-plus-core/src/ports.rs
 +++ b/crates/codex-plus-core/src/ports.rs
-@@ -28,7 +28,7 @@ pub fn select_packaged_codex_debug_port_with(
+@@ -27,11 +27,11 @@ pub fn select_packaged_codex_debug_port(requested: u16) -> u16 {
+ 
+ pub fn select_packaged_codex_debug_port_with(
      requested: u16,
 -    is_windows: bool,
 -    can_bind: impl Fn(u16) -> bool,
@@ -186,15 +219,24 @@ index cfa4933..5d33223 100644
 -    select_platform_loopback_port_with(requested, is_windows, can_bind, find_available)
 +    requested
  }
+ 
+ pub fn select_platform_loopback_port_with(
 diff --git a/crates/codex-plus-core/tests/cdp_bridge.rs b/crates/codex-plus-core/tests/cdp_bridge.rs
 index c8fe983..c2f918e 100644
 --- a/crates/codex-plus-core/tests/cdp_bridge.rs
 +++ b/crates/codex-plus-core/tests/cdp_bridge.rs
-@@ -832,0 +833,3 @@ fn bridge_health_check_script_uses_real_backend_round_trip() {
+@@ -830,11 +830,24 @@ fn bridge_health_check_script_uses_real_backend_round_trip() {
+     let script = bridge::bridge_health_check_script();
+ 
+     assert!(script.contains("__codexSessionDeleteBridge"));
 +    assert!(script.contains("__CODEX_PLUS_VERSION__"));
 +    assert!(script.contains("#codex-plus-menu"));
 +    assert!(script.contains("[data-codex-plus-menu=\"true\"]"));
-@@ -837,0 +841,9 @@ fn bridge_health_check_script_uses_real_backend_round_trip() {
+     assert!(script.contains("/backend/status"));
+     assert!(script.contains("Promise.race"));
+     assert!(script.contains("setTimeout"));
+ }
+ 
 +#[test]
 +fn bridge_health_check_script_rejects_bridge_only_renderer_state() {
 +    let script = bridge::bridge_health_check_script();
@@ -204,16 +246,24 @@ index c8fe983..c2f918e 100644
 +        "if (!document.querySelector('#codex-plus-menu, [data-codex-plus-menu=\"true\"]')) return false;"
 +    ));
 +}
++
+ #[test]
+ fn bridge_result_expressions_json_escape_inputs() {
+     let resolve = bridge::resolve_bridge_expression("request\"1", &json!({"status": "ok"}))
 diff --git a/crates/codex-plus-core/tests/launcher.rs b/crates/codex-plus-core/tests/launcher.rs
 index 5c13508..9f7319e 100644
 --- a/crates/codex-plus-core/tests/launcher.rs
 +++ b/crates/codex-plus-core/tests/launcher.rs
-@@ -374,3 +374,3 @@ fn ports_windows_falls_back_to_ephemeral_when_requested_is_busy() {
+@@ -372,10 +372,10 @@ fn ports_windows_falls_back_to_ephemeral_when_requested_is_busy() {
+ }
+ 
  #[test]
 -fn ports_windows_packaged_debug_falls_back_to_ephemeral_when_requested_is_busy() {
 +fn ports_windows_packaged_debug_keeps_requested_when_requested_is_busy() {
      let selected = select_packaged_codex_debug_port_with(9229, true, |_| false, || 43001);
-@@ -378,2 +378,2 @@ fn ports_windows_packaged_debug_falls_back_to_ephemeral_when_requested_is_busy()
+ 
 -    assert_eq!(selected, 43001);
 +    assert_eq!(selected, 9229);
  }
+ 
+ #[test]
