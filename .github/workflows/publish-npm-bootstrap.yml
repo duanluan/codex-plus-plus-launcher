@@ -67,16 +67,25 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           mkdir -p upstream-bin
-          python -c "from codex_plus_plus_launcher.upstream_release import write_latest_release_json; write_latest_release_json('upstream-bin/upstream-release.json')"
           python - <<'PY' >> "$GITHUB_ENV"
           import json
           import os
           from pathlib import Path
+          from codex_plus_plus_launcher.upstream_release import write_latest_release_json
 
-          payload = json.load(open("upstream-bin/upstream-release.json", encoding="utf-8"))
           package_version = json.loads(Path("package.json").read_text(encoding="utf-8"))["version"]
-          upstream_ref = os.environ.get("CODEXPP_UPSTREAM_REF") or payload.get("ref") or payload.get("version") or payload.get("tag") or payload.get("upstream_version") or f"v{package_version}"
+          locked_metadata_path = Path(".github/upstream-sync/latest.json")
+          payload = {}
+          if locked_metadata_path.exists():
+            payload = json.loads(locked_metadata_path.read_text(encoding="utf-8"))
+          upstream_ref = os.environ.get("CODEXPP_UPSTREAM_REF") or payload.get("ref") or payload.get("upstream_version") or payload.get("version") or payload.get("tag")
+          if not upstream_ref:
+            write_latest_release_json("upstream-bin/upstream-release.json")
+            payload = json.loads(Path("upstream-bin/upstream-release.json").read_text(encoding="utf-8"))
+            upstream_ref = payload.get("ref") or payload.get("version") or payload.get("tag") or payload.get("upstream_version") or f"v{package_version}"
           payload["ref"] = upstream_ref
+          payload["upstream_version"] = payload.get("upstream_version") or payload.get("version") or upstream_ref
+          payload["version"] = payload.get("version") or payload["upstream_version"]
           payload["package_version"] = package_version
           Path("upstream-bin/upstream-release.json").write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
           print(f"CODEXPP_UPSTREAM_REF={upstream_ref}")
