@@ -66,6 +66,7 @@ jobs:
         shell: bash
         env:
           PACKAGE_NAME: ${{ steps.package.outputs.name }}
+          CURRENT_VERSION: ${{ steps.package.outputs.current_version }}
           TARGET_VERSION: ${{ steps.upstream.outputs.target_version }}
         run: |
           if npm view "${PACKAGE_NAME}@${TARGET_VERSION}" version --registry=https://registry.npmjs.org >/dev/null 2>&1; then
@@ -73,15 +74,33 @@ jobs:
           else
             echo "published=false" >> "$GITHUB_OUTPUT"
           fi
+          node <<'JS' >> "$GITHUB_OUTPUT"
+          function parseVersion(value) {
+            const match = String(value || '').match(/^(\d+)\.(\d+)\.(\d+)/);
+            if (!match) throw new Error(`invalid semver: ${value}`);
+            return match.slice(1).map(Number);
+          }
+          function compareVersions(left, right) {
+            for (let index = 0; index < 3; index += 1) {
+              if (left[index] !== right[index]) return left[index] - right[index];
+            }
+            return 0;
+          }
+          const current = parseVersion(process.env.CURRENT_VERSION);
+          const target = parseVersion(process.env.TARGET_VERSION);
+          const comparison = compareVersions(target, current);
+          console.log(`target_is_newer=${comparison > 0}`);
+          console.log(`versions_equal=${comparison === 0}`);
+          JS
 
       - name: Stop when target version is already published
-        if: steps.package.outputs.current_version == steps.upstream.outputs.target_version && steps.npm.outputs.published == 'true'
+        if: steps.npm.outputs.target_is_newer != 'true' && steps.npm.outputs.published == 'true'
         shell: bash
         run: |
-          echo "${{ steps.package.outputs.name }}@${{ steps.upstream.outputs.target_version }} already published"
+          echo "${{ steps.package.outputs.name }}@${{ steps.upstream.outputs.target_version }} already published; current wrapper is ${{ steps.package.outputs.current_version }}"
 
       - name: Update wrapper version
-        if: steps.package.outputs.current_version != steps.upstream.outputs.target_version
+        if: steps.npm.outputs.target_is_newer == 'true'
         shell: bash
         env:
           TARGET_VERSION: ${{ steps.upstream.outputs.target_version }}
@@ -130,13 +149,13 @@ jobs:
           PY
 
       - name: Test wrapper changes
-        if: steps.package.outputs.current_version != steps.upstream.outputs.target_version
+        if: steps.npm.outputs.target_is_newer == 'true'
         run: |
           python -m pip install -e ".[test]"
           python -m pytest
 
       - name: Commit wrapper version
-        if: steps.package.outputs.current_version != steps.upstream.outputs.target_version
+        if: steps.npm.outputs.target_is_newer == 'true'
         shell: bash
         env:
           UPSTREAM_VERSION: ${{ steps.upstream.outputs.upstream_version }}
@@ -148,7 +167,7 @@ jobs:
           git push origin HEAD:main
 
       - name: Create release tag
-        if: steps.npm.outputs.published != 'true'
+        if: steps.npm.outputs.published != 'true' && (steps.npm.outputs.target_is_newer == 'true' || steps.npm.outputs.versions_equal == 'true')
         shell: bash
         env:
           CURRENT_VERSION: ${{ steps.package.outputs.current_version }}
@@ -166,7 +185,7 @@ jobs:
           fi
 
       - name: Publish npm through release workflow
-        if: steps.npm.outputs.published != 'true'
+        if: steps.npm.outputs.published != 'true' && (steps.npm.outputs.target_is_newer == 'true' || steps.npm.outputs.versions_equal == 'true')
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}

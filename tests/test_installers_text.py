@@ -108,7 +108,7 @@ def test_smoke_install_uses_current_package_version_tarball():
 def test_package_exposes_only_explicit_commands():
     content = Path("package.json").read_text(encoding="utf-8")
 
-    assert '"version": "1.2.15"' in content
+    assert '"version": "1.2.16"' in content
     assert '"codex_plus_plus_launcher/*.py"' in content
     assert '"codex_plus_plus_launcher/assets/*"' in content
     assert '"upstream-bin/**"' in content

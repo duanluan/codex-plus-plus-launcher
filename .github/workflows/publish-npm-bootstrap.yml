@@ -75,10 +75,11 @@ jobs:
 
           payload = json.load(open("upstream-bin/upstream-release.json", encoding="utf-8"))
           package_version = json.loads(Path("package.json").read_text(encoding="utf-8"))["version"]
-          target_version = package_version
-          payload["version"] = f"v{target_version}"
+          upstream_ref = os.environ.get("CODEXPP_UPSTREAM_REF") or payload.get("ref") or payload.get("version") or payload.get("tag") or payload.get("upstream_version") or f"v{package_version}"
+          payload["ref"] = upstream_ref
+          payload["package_version"] = package_version
           Path("upstream-bin/upstream-release.json").write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-          print(f"CODEXPP_UPSTREAM_REF={os.environ.get('CODEXPP_UPSTREAM_REF', f'v{target_version}')}")
+          print(f"CODEXPP_UPSTREAM_REF={upstream_ref}")
           PY
 
       - name: Checkout upstream Codex++

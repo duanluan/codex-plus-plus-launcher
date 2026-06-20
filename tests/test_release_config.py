@@ -37,9 +37,10 @@ def test_release_workflow_publishes_npm_only():
     assert 'tags:\n      - "v*"' in content
     assert "python - <<'PY'" in content
     assert "CODEXPP_UPSTREAM_COMMIT" in content
-    assert "target_version = package_version" in content
-    assert 'print(f"CODEXPP_UPSTREAM_REF={os.environ.get(' in content
-    assert "v{target_version}" in content
+    assert "upstream_ref = os.environ.get(\"CODEXPP_UPSTREAM_REF\")" in content
+    assert "payload[\"ref\"] = upstream_ref" in content
+    assert "payload[\"package_version\"] = package_version" in content
+    assert "print(f\"CODEXPP_UPSTREAM_REF={upstream_ref}\")" in content
 
 
 def test_manual_npm_publish_workflow_exists():
@@ -63,8 +64,10 @@ def test_manual_npm_publish_workflow_exists():
     assert "npm publish --access public" in content
     assert "secrets.NPM_TOKEN" in content
     assert "path: upstream-bin" in content
-    assert "target_version = package_version" in content
-    assert 'print(f"CODEXPP_UPSTREAM_REF={os.environ.get(' in content
+    assert "upstream_ref = os.environ.get(\"CODEXPP_UPSTREAM_REF\")" in content
+    assert "payload[\"ref\"] = upstream_ref" in content
+    assert "payload[\"package_version\"] = package_version" in content
+    assert "print(f\"CODEXPP_UPSTREAM_REF={upstream_ref}\")" in content
 
 
 def test_sync_upstream_workflow_exists():
@@ -77,6 +80,9 @@ def test_sync_upstream_workflow_exists():
     assert "actions: write" in content
     assert "npm view" in content
     assert "target_version" in content
+    assert "target_is_newer" in content
+    assert "versions_equal" in content
+    assert "compareVersions(target, current)" in content
     assert "git push origin HEAD:main" in content
     assert "git tag \"v${TARGET_VERSION}\"" in content
     assert "gh workflow run release.yml --ref \"v${TARGET_VERSION}\"" in content

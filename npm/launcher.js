@@ -16,6 +16,8 @@ const LINUX_SHIM_BINARY = 'codex.exe';
 const LINUX_DESKTOP_ENTRY = 'codex-plus-plus.desktop';
 const PLUGIN_AUTH_UNLOCK_FILE = 'plugin-auth-unlocked.js';
 const PLUGIN_AUTH_UNLOCK_CONTENT = 'function e(e){return false}export{e as t};\n';
+const WINDOWS_LAUNCH_SCRIPT = 'launch-codexpp.vbs';
+const CODEX_PLUS_MENU_SELECTOR = '#codex-plus-menu, [data-codex-plus-menu="true"]';
 
 function optionValue(options, key, fallback) {
   const value = options[key];
@@ -304,6 +306,532 @@ function terminateProcesses(processes, options = {}) {
     stdio: 'ignore',
     windowsHide: true,
   });
+  const taskkillArgs = ['/F'];
+  for (const id of ids) {
+    taskkillArgs.push('/PID', String(id));
+  }
+  run('taskkill.exe', taskkillArgs, {
+    encoding: 'utf8',
+    env,
+    stdio: 'ignore',
+    windowsHide: true,
+  });
+}
+
+function terminateSidecarsByImageName(options = {}) {
+  const platform = optionValue(options, 'platform', process.platform);
+  if (platform !== 'win32') {
+    return false;
+  }
+  if (typeof options.terminateSidecarsByImageName === 'function') {
+    return Boolean(options.terminateSidecarsByImageName(options));
+  }
+  const run = options.spawnSync || spawnSync;
+  const result = run('taskkill.exe', ['/F', '/IM', 'codex-plus-plus.exe'], {
+    encoding: 'utf8',
+    env: options.env || process.env,
+    stdio: 'ignore',
+    windowsHide: true,
+  });
+  return Boolean(result && result.status === 0);
+}
+
+function findRunningCodexProcesses(options = {}) {
+  const platform = optionValue(options, 'platform', process.platform);
+  if (platform !== 'win32') {
+    return [];
+  }
+  if (typeof options.findRunningCodexProcesses === 'function') {
+    return options.findRunningCodexProcesses(options) || [];
+  }
+
+  const run = options.processSpawnSync || (options.spawnSync ? null : spawnSync);
+  if (!run) {
+    return [];
+  }
+  const script = [
+    '$ErrorActionPreference = "SilentlyContinue"',
+    'Get-CimInstance Win32_Process | Where-Object {',
+    '  $_.Name -ieq "Codex.exe"',
+    '} | Select-Object ProcessId,Name,ExecutablePath,CommandLine | ConvertTo-Json -Compress',
+  ].join('\n');
+  const result = run('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', script], {
+    encoding: 'utf8',
+    windowsHide: true,
+  });
+  if (!result || result.status !== 0) {
+    return [];
+  }
+  try {
+    return parsePowerShellJson(result.stdout);
+  } catch (_error) {
+    return [];
+  }
+}
+
+function findRunningSidecarProcesses(options = {}) {
+  const platform = optionValue(options, 'platform', process.platform);
+  if (platform !== 'win32') {
+    return [];
+  }
+  if (typeof options.findRunningSidecarProcesses === 'function') {
+    return options.findRunningSidecarProcesses(options) || [];
+  }
+
+  const run = options.processSpawnSync || (options.spawnSync ? null : spawnSync);
+  if (!run) {
+    return [];
+  }
+  const script = [
+    '$ErrorActionPreference = "SilentlyContinue"',
+    'Get-CimInstance Win32_Process | Where-Object {',
+    '  $_.Name -ieq "codex-plus-plus.exe"',
+    '} | Select-Object ProcessId,Name,ExecutablePath,CommandLine | ConvertTo-Json -Compress',
+  ].join('\n');
+  const result = run('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', script], {
+    encoding: 'utf8',
+    windowsHide: true,
+  });
+  if (!result || result.status !== 0) {
+    return [];
+  }
+  try {
+    return parsePowerShellJson(result.stdout);
+  } catch (_error) {
+    return [];
+  }
+}
+
+function cdpTargetsAvailable(debugPort, options = {}) {
+  if (typeof options.cdpTargetsAvailable === 'function') {
+    return options.cdpTargetsAvailable(debugPort, options);
+  }
+  const run = options.processSpawnSync || (options.spawnSync ? null : spawnSync);
+  if (!run) {
+    return true;
+  }
+  const env = { ...(options.env || process.env), CODEXPP_DEBUG_PORT: String(debugPort) };
+  const script = [
+    '$ErrorActionPreference = "SilentlyContinue"',
+    '$port = [int]$env:CODEXPP_DEBUG_PORT',
+    'foreach ($hostName in @("127.0.0.1", "[::1]")) {',
+    '  try {',
+    '    $response = Invoke-WebRequest -UseBasicParsing -Uri "http://$hostName`:$port/json" -TimeoutSec 2',
+    '    if ($response.StatusCode -eq 200 -and $response.Content -match "webSocketDebuggerUrl") { exit 0 }',
+    '  } catch {}',
+    '}',
+    'exit 1',
+  ].join('\n');
+  const result = run('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script], {
+    encoding: 'utf8',
+    env,
+    windowsHide: true,
+  });
+  return Boolean(result && result.status === 0);
+}
+
+function codexPlusUiInjectionProbeScript() {
+  return String.raw`
+const http = require('node:http');
+const net = require('node:net');
+const crypto = require('node:crypto');
+
+const debugPort = Number(process.env.CODEXPP_DEBUG_PORT || '0');
+const selector = process.env.CODEXPP_MENU_SELECTOR || '#codex-plus-menu, [data-codex-plus-menu="true"]';
+
+function exitSoon(code) {
+  try {
+    process.exitCode = code;
+  } finally {
+    process.exit(code);
+  }
+}
+
+function readJson(pathname) {
+  return new Promise((resolve, reject) => {
+    const request = http.get({
+      host: '127.0.0.1',
+      port: debugPort,
+      path: pathname,
+      timeout: 1500,
+    }, (response) => {
+      const chunks = [];
+      response.setEncoding('utf8');
+      response.on('data', (chunk) => chunks.push(chunk));
+      response.on('end', () => {
+        try {
+          resolve(JSON.parse(chunks.join('')));
+        } catch (error) {
+          reject(error);
+        }
+      });
+    });
+    request.on('timeout', () => request.destroy(new Error('timeout')));
+    request.on('error', reject);
+  });
+}
+
+function parseWebSocketTarget(webSocketDebuggerUrl) {
+  const parsed = new URL(webSocketDebuggerUrl);
+  if (parsed.protocol !== 'ws:') {
+    throw new Error('unsupported websocket protocol');
+  }
+  return {
+    host: parsed.hostname,
+    port: Number(parsed.port || 80),
+    path: (parsed.pathname || '/') + (parsed.search || ''),
+  };
+}
+
+function encodeClientTextFrame(text) {
+  const payload = Buffer.from(text, 'utf8');
+  if (payload.length > 65535) {
+    throw new Error('websocket payload too large');
+  }
+  const headerLength = payload.length < 126 ? 2 : 4;
+  const frame = Buffer.alloc(headerLength + 4 + payload.length);
+  frame[0] = 0x81;
+  let offset = 2;
+  if (payload.length < 126) {
+    frame[1] = 0x80 | payload.length;
+  } else {
+    frame[1] = 0x80 | 126;
+    frame.writeUInt16BE(payload.length, 2);
+    offset = 4;
+  }
+  const mask = crypto.randomBytes(4);
+  mask.copy(frame, offset);
+  for (let index = 0; index < payload.length; index += 1) {
+    frame[offset + 4 + index] = payload[index] ^ mask[index % 4];
+  }
+  return frame;
+}
+
+function evaluateMenuState(webSocketDebuggerUrl) {
+  return new Promise((resolve, reject) => {
+    let target;
+    try {
+      target = parseWebSocketTarget(webSocketDebuggerUrl);
+    } catch (error) {
+      reject(error);
+      return;
+    }
+    const socket = net.createConnection({ host: target.host, port: target.port });
+    let buffer = Buffer.alloc(0);
+    let upgraded = false;
+    let settled = false;
+    const timer = setTimeout(() => {
+      finish(new Error('CDP evaluate timed out'));
+    }, 2500);
+
+    function finish(error, value) {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timer);
+      socket.destroy();
+      if (error) {
+        reject(error);
+      } else {
+        resolve(value);
+      }
+    }
+
+    function sendEvaluateRequest() {
+      socket.write(encodeClientTextFrame(JSON.stringify({
+        id: 1,
+        method: 'Runtime.evaluate',
+        params: {
+          expression: '(() => Boolean(document.querySelector(' + JSON.stringify(selector) + ')))()',
+          returnByValue: true,
+          awaitPromise: true,
+          allowUnsafeEvalBlockedByCSP: true,
+        },
+      })));
+    }
+
+    function readFrames() {
+      while (buffer.length >= 2) {
+        const first = buffer[0];
+        const second = buffer[1];
+        const opcode = first & 0x0f;
+        let length = second & 0x7f;
+        let offset = 2;
+        if (length === 126) {
+          if (buffer.length < offset + 2) return;
+          length = buffer.readUInt16BE(offset);
+          offset += 2;
+        } else if (length === 127) {
+          if (buffer.length < offset + 8) return;
+          const high = buffer.readUInt32BE(offset);
+          const low = buffer.readUInt32BE(offset + 4);
+          if (high !== 0) {
+            finish(new Error('websocket frame too large'));
+            return;
+          }
+          length = low;
+          offset += 8;
+        }
+        const masked = Boolean(second & 0x80);
+        let mask = null;
+        if (masked) {
+          if (buffer.length < offset + 4) return;
+          mask = buffer.subarray(offset, offset + 4);
+          offset += 4;
+        }
+        if (buffer.length < offset + length) return;
+        const payload = Buffer.from(buffer.subarray(offset, offset + length));
+        buffer = buffer.subarray(offset + length);
+        if (mask) {
+          for (let index = 0; index < payload.length; index += 1) {
+            payload[index] ^= mask[index % 4];
+          }
+        }
+        if (opcode === 0x8) {
+          finish(new Error('CDP websocket closed'));
+          return;
+        }
+        if (opcode !== 0x1 && opcode !== 0x0) {
+          continue;
+        }
+        let payloadJson;
+        try {
+          payloadJson = JSON.parse(payload.toString('utf8'));
+        } catch (_error) {
+          continue;
+        }
+        if (payloadJson.id !== 1) {
+          continue;
+        }
+        if (payloadJson.error) {
+          finish(new Error(payloadJson.error.message || 'CDP evaluate failed'));
+          return;
+        }
+        finish(null, Boolean(payloadJson.result && payloadJson.result.result && payloadJson.result.result.value));
+        return;
+      }
+    }
+
+    socket.on('connect', () => {
+      const key = crypto.randomBytes(16).toString('base64');
+      socket.write([
+        'GET ' + target.path + ' HTTP/1.1',
+        'Host: ' + target.host + ':' + target.port,
+        'Upgrade: websocket',
+        'Connection: Upgrade',
+        'Sec-WebSocket-Key: ' + key,
+        'Sec-WebSocket-Version: 13',
+        '',
+        '',
+      ].join('\r\n'));
+    });
+
+    socket.on('data', (chunk) => {
+      buffer = Buffer.concat([buffer, chunk]);
+      if (!upgraded) {
+        const headerEnd = buffer.indexOf('\r\n\r\n');
+        if (headerEnd === -1) {
+          return;
+        }
+        const header = buffer.subarray(0, headerEnd).toString('latin1');
+        buffer = buffer.subarray(headerEnd + 4);
+        if (!/^HTTP\/1\.[01] 101\b/.test(header)) {
+          finish(new Error('CDP websocket upgrade failed'));
+          return;
+        }
+        upgraded = true;
+        sendEvaluateRequest();
+      }
+      readFrames();
+    });
+
+    socket.on('error', (error) => {
+      finish(error);
+    });
+
+    socket.on('close', () => {
+      if (!settled) {
+        finish(new Error('CDP websocket closed'));
+        return;
+      }
+    });
+  });
+}
+
+(async () => {
+  if (!Number.isInteger(debugPort) || debugPort <= 0) {
+    exitSoon(3);
+  }
+  const targets = await readJson('/json/list').catch(() => readJson('/json'));
+  const list = Array.isArray(targets) ? targets : [];
+  const target = list.find((candidate) => candidate.type === 'page' && candidate.webSocketDebuggerUrl)
+    || list.find((candidate) => candidate.webSocketDebuggerUrl);
+  if (!target) {
+    exitSoon(3);
+  }
+  const present = await evaluateMenuState(target.webSocketDebuggerUrl);
+  exitSoon(present ? 0 : 2);
+})().catch(() => exitSoon(3));
+`;
+}
+
+function codexPlusUiInjectionState(debugPort, options = {}) {
+  if (typeof options.codexPlusUiInjectionState === 'function') {
+    return options.codexPlusUiInjectionState(debugPort, options);
+  }
+  const run = options.processSpawnSync || (options.spawnSync || options.spawn ? null : spawnSync);
+  if (!run) {
+    return 'unknown';
+  }
+  const env = {
+    ...(options.env || process.env),
+    CODEXPP_DEBUG_PORT: String(debugPort),
+    CODEXPP_MENU_SELECTOR: CODEX_PLUS_MENU_SELECTOR,
+  };
+  const result = run(process.execPath, ['-e', codexPlusUiInjectionProbeScript()], {
+    encoding: 'utf8',
+    env,
+    timeout: optionValue(options, 'uiInjectionProbeTimeoutMs', 4000),
+    windowsHide: true,
+  });
+  if (!result) {
+    return 'unknown';
+  }
+  if (result.status === 0) {
+    return 'present';
+  }
+  if (result.status === 2) {
+    return 'missing';
+  }
+  return 'unknown';
+}
+
+function launchDebugPort(args = [], fallback = 9229) {
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = String(args[index] || '');
+    if (arg === '--debug-port' && args[index + 1]) {
+      const parsed = Number(args[index + 1]);
+      if (Number.isInteger(parsed) && parsed > 0 && parsed <= 65535) {
+        return parsed;
+      }
+    }
+    const match = arg.match(/^--remote-debugging-port=(\d+)$/) || arg.match(/^--debug-port=(\d+)$/);
+    if (match) {
+      const parsed = Number(match[1]);
+      if (Number.isInteger(parsed) && parsed > 0 && parsed <= 65535) {
+        return parsed;
+      }
+    }
+  }
+  return fallback;
+}
+
+function codexProcessDebugPorts(processes = []) {
+  const ports = [];
+  for (const processInfo of processes) {
+    const commandLine = String(processInfo.CommandLine || '');
+    const match = commandLine.match(/--remote-debugging-port=(\d+)/);
+    if (!match) {
+      continue;
+    }
+    const parsed = Number(match[1]);
+    if (Number.isInteger(parsed) && parsed > 0 && parsed <= 65535 && !ports.includes(parsed)) {
+      ports.push(parsed);
+    }
+  }
+  return ports;
+}
+
+function preflightWindowsCodexLaunch(args = [], options = {}) {
+  const platform = optionValue(options, 'platform', process.platform);
+  const env = options.env || process.env;
+  if (platform !== 'win32' || isTruthyEnv(env.CODEXPP_DISABLE_CDP_PREFLIGHT)) {
+    return { action: 'noop' };
+  }
+
+  const processes = findRunningCodexProcesses(options);
+  if (processes.length === 0) {
+    return { action: 'noop' };
+  }
+
+  const requestedDebugPort = launchDebugPort(args);
+  const runningDebugPorts = codexProcessDebugPorts(processes);
+  const portsToCheck = runningDebugPorts.length > 0 ? runningDebugPorts : [requestedDebugPort];
+  if (runningDebugPorts.length > 0) {
+    const availableDebugPort = portsToCheck.find((debugPort) => cdpTargetsAvailable(debugPort, options));
+    if (availableDebugPort) {
+      const uiState = codexPlusUiInjectionState(availableDebugPort, options);
+      if (uiState !== 'missing') {
+        return { action: 'noop', debugPort: availableDebugPort, processCount: processes.length, uiState };
+      }
+
+      const sidecars = findRunningSidecarProcesses(options);
+      if (sidecars.length > 0) {
+        const terminate = options.terminateProcesses || terminateProcesses;
+        terminate(sidecars, options);
+        return {
+          action: 'terminated_stale_sidecar',
+          debugPort: availableDebugPort,
+          processCount: processes.length,
+          sidecarCount: sidecars.length,
+          uiState,
+        };
+      }
+
+      terminateSidecarsByImageName(options);
+      return {
+        action: 'terminated_stale_sidecar_by_name',
+        debugPort: availableDebugPort,
+        processCount: processes.length,
+        sidecarCount: 0,
+        uiState,
+      };
+    }
+  }
+
+  const sidecars = findRunningSidecarProcesses(options);
+  if (sidecars.length > 0) {
+    const terminate = options.terminateProcesses || terminateProcesses;
+    terminate(sidecars, options);
+    return {
+      action: 'terminated_sidecar_for_unavailable_cdp',
+      debugPort: portsToCheck[0],
+      processCount: processes.length,
+      sidecarCount: sidecars.length,
+    };
+  }
+
+  return { action: 'cdp_unavailable', debugPort: portsToCheck[0], processCount: processes.length };
+}
+
+function shouldPassPreflightDebugPort(preflight) {
+  return Boolean(
+    preflight
+      && preflight.uiState === 'missing'
+      && Number.isInteger(preflight.debugPort)
+      && preflight.debugPort > 0
+      && preflight.debugPort <= 65535,
+  );
+}
+
+function sidecarArgsWithDebugPort(args = [], debugPort) {
+  if (!Number.isInteger(debugPort) || debugPort <= 0 || debugPort > 65535) {
+    return args;
+  }
+  const filtered = [];
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = String(args[index] || '');
+    if (arg === '--debug-port') {
+      index += 1;
+      continue;
+    }
+    if (/^--debug-port=\d+$/.test(arg) || /^--remote-debugging-port=\d+$/.test(arg)) {
+      continue;
+    }
+    filtered.push(args[index]);
+  }
+  return ['--debug-port', String(debugPort), ...filtered];
 }
 
 function isTruthyEnv(value) {
@@ -1017,6 +1545,55 @@ function psQuote(value) {
   return `'${String(value).replace(/'/g, "''")}'`;
 }
 
+function windowsCommandLineArg(value) {
+  const raw = String(value);
+  if (raw && !/[ \t"]/.test(raw)) {
+    return raw;
+  }
+  let output = '"';
+  let backslashes = 0;
+  for (const ch of raw) {
+    if (ch === '\\') {
+      backslashes += 1;
+    } else if (ch === '"') {
+      output += '\\'.repeat(backslashes * 2 + 1) + '"';
+      backslashes = 0;
+    } else {
+      output += '\\'.repeat(backslashes) + ch;
+      backslashes = 0;
+    }
+  }
+  output += '\\'.repeat(backslashes * 2) + '"';
+  return output;
+}
+
+function vbsString(value) {
+  return `"${String(value).replace(/"/g, '""')}"`;
+}
+
+function windowsWscriptPath(options = {}) {
+  const env = options.env || process.env;
+  return path.join(env.SystemRoot || env.SYSTEMROOT || 'C:\\Windows', 'System32', 'wscript.exe');
+}
+
+function writeWindowsLaunchScript(installed, options = {}) {
+  const fsImpl = options.fs || fs;
+  const installRoot = installed.installRoot || path.dirname(installed.silent);
+  const scriptPath = optionValue(options, 'windowsLaunchScriptPath', () => path.join(installRoot, WINDOWS_LAUNCH_SCRIPT));
+  const nodePath = optionValue(options, 'nodePath', process.execPath);
+  const cxppScript = path.join(optionValue(options, 'packageRoot', packageRoot), 'npm', 'cxpp.js');
+  const commandLine = [nodePath, cxppScript, 'launch'].map(windowsCommandLineArg).join(' ');
+  const contents = [
+    'Set shell = CreateObject("WScript.Shell")',
+    `shell.CurrentDirectory = ${vbsString(installRoot)}`,
+    `shell.Run ${vbsString(commandLine)}, 0, False`,
+    '',
+  ].join('\r\n');
+  fsImpl.mkdirSync(path.dirname(scriptPath), { recursive: true });
+  fsImpl.writeFileSync(scriptPath, contents, 'utf8');
+  return scriptPath;
+}
+
 function windowsEntrypointPaths(options = {}) {
   const env = options.env || process.env;
   const desktop = optionValue(options, 'desktopDir', () => path.join(os.homedir(), 'Desktop'));
@@ -1037,17 +1614,39 @@ function installWindowsEntrypoints(installed, options = {}) {
   const paths = windowsEntrypointPaths(options);
   fsImpl.mkdirSync(path.dirname(paths.desktopSilent), { recursive: true });
   fsImpl.mkdirSync(paths.startMenu, { recursive: true });
+  const launchScript = writeWindowsLaunchScript(installed, options);
+  const wscript = windowsWscriptPath(options);
+  const installRoot = installed.installRoot || path.dirname(installed.silent);
   const specs = [
-    [paths.desktopSilent, installed.silent, 'Launch Codex++ silently'],
-    [paths.desktopManager, installed.manager, 'Open Codex++ management tool'],
-    [paths.startMenuSilent, installed.silent, 'Launch Codex++ silently'],
-    [paths.startMenuManager, installed.manager, 'Open Codex++ management tool'],
-  ].map(([shortcutPath, target, description]) => ({
-    path: shortcutPath,
-    target,
-    description,
-    icon: target,
-  }));
+    {
+      path: paths.desktopSilent,
+      target: wscript,
+      arguments: windowsCommandLineArg(launchScript),
+      workingDirectory: installRoot,
+      description: 'Launch Codex++ silently',
+      icon: installed.silent,
+    },
+    {
+      path: paths.desktopManager,
+      target: installed.manager,
+      description: 'Open Codex++ management tool',
+      icon: installed.manager,
+    },
+    {
+      path: paths.startMenuSilent,
+      target: wscript,
+      arguments: windowsCommandLineArg(launchScript),
+      workingDirectory: installRoot,
+      description: 'Launch Codex++ silently',
+      icon: installed.silent,
+    },
+    {
+      path: paths.startMenuManager,
+      target: installed.manager,
+      description: 'Open Codex++ management tool',
+      icon: installed.manager,
+    },
+  ];
   const result = run('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', windowsShortcutScript(specs)], {
     encoding: 'utf8',
     windowsHide: true,
@@ -1383,7 +1982,12 @@ async function runLauncher(args = [], options = {}) {
   if (command === 'launch' || command === 'run') {
     await ensureSidecarsFresh(options);
     const passthrough = args.slice(1);
-    return spawnSidecar('silent', passthrough[0] === '--' ? passthrough.slice(1) : passthrough, options);
+    const sidecarArgs = passthrough[0] === '--' ? passthrough.slice(1) : passthrough;
+    const preflight = preflightWindowsCodexLaunch(sidecarArgs, options);
+    const launchArgs = shouldPassPreflightDebugPort(preflight)
+      ? sidecarArgsWithDebugPort(sidecarArgs, preflight.debugPort)
+      : sidecarArgs;
+    return spawnSidecar('silent', launchArgs, options);
   }
   if (command === 'manager') {
     await ensureSidecarsFresh(options);
@@ -1406,6 +2010,7 @@ module.exports = {
   executableName,
   filesMatch,
   findRunningProcessesForPath,
+  findRunningSidecarProcesses,
   installApp,
   installEntrypoints,
   installSidecars,
@@ -1418,15 +2023,20 @@ module.exports = {
   fallbackMacInstallRoot,
   macAppRoot,
   platformKey,
+  preflightWindowsCodexLaunch,
+  codexPlusUiInjectionState,
+  sidecarArgsWithDebugPort,
   promptYesNoWindowsPopup,
   readInstalledSidecarVersion,
   removePath,
   runLauncher,
   spawnSidecar,
   terminateProcesses,
+  terminateSidecarsByImageName,
   upstreamBinDir,
   upstreamMetadata,
   upstreamMetadataPath,
+  writeWindowsLaunchScript,
   windowsShortcutScript,
   windowsEntrypointPaths,
   writeMacAppBundle,

@@ -13,8 +13,30 @@ function packageVersion(root = packageRoot()) {
   return JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).version;
 }
 
+function upstreamRefFromMetadata(root = packageRoot()) {
+  for (const relativePath of [
+    path.join('upstream-bin', 'upstream-release.json'),
+    path.join('.github', 'upstream-sync', 'latest.json'),
+  ]) {
+    const metadataPath = path.join(root, relativePath);
+    if (!fs.existsSync(metadataPath)) {
+      continue;
+    }
+    try {
+      const payload = JSON.parse(fs.readFileSync(metadataPath, 'utf8'));
+      const ref = payload.ref || payload.version || payload.tag || payload.upstream_version;
+      if (ref) {
+        return String(ref);
+      }
+    } catch (_error) {
+      // Ignore malformed local metadata and fall back to the package version.
+    }
+  }
+  return null;
+}
+
 function defaultUpstreamRef(root = packageRoot()) {
-  return `v${packageVersion(root)}`;
+  return upstreamRefFromMetadata(root) || `v${packageVersion(root)}`;
 }
 
 function run(command, args, options = {}) {
@@ -125,4 +147,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { applyPluginUnlockPatch, buildTargetArgs, cargoTargetForKey, defaultUpstreamRef, main, packageBuildArgs, platformKey };
+module.exports = { applyPluginUnlockPatch, buildTargetArgs, cargoTargetForKey, defaultUpstreamRef, main, packageBuildArgs, platformKey, upstreamRefFromMetadata };

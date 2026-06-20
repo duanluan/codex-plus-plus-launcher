@@ -133,8 +133,12 @@ def test_windows_shortcut_plan_includes_two_entries_in_two_locations():
 
         const installRoot = 'C:\\Users\\me\\AppData\\Local\\Programs\\Codex++';
         const scripts = [];
+        const launcherScripts = [];
         const fakeFs = {
           mkdirSync() {},
+          writeFileSync(target, contents) {
+            launcherScripts.push({ target, contents });
+          },
         };
         launcher.installWindowsEntrypoints(
           {
@@ -144,6 +148,9 @@ def test_windows_shortcut_plan_includes_two_entries_in_two_locations():
           {
             fs: fakeFs,
             platform: 'win32',
+            packageRoot: 'C:\\Users\\me\\AppData\\Roaming\\npm\\node_modules\\@duanluan\\codex-plus-plus-launcher',
+            nodePath: 'C:\\Program Files\\nodejs\\node.exe',
+            env: { SystemRoot: 'C:\\Windows' },
             desktopDir: 'C:\\Users\\me\\Desktop',
             startMenuDir: 'C:\\Users\\me\\Start Menu\\Codex++',
             spawnSync(command, args) {
@@ -155,13 +162,418 @@ def test_windows_shortcut_plan_includes_two_entries_in_two_locations():
         );
 
         assert.equal(scripts.length, 1);
+        assert.equal(launcherScripts.length, 1);
         const script = scripts[0];
         assert.match(script, /Codex\+\+\.lnk/);
         assert.match(script, /Codex\+\+ 管理工具\.lnk/);
-        assert.match(script, /codex-plus-plus\.exe/);
+        assert.match(script, /wscript\.exe/);
+        assert.match(script, /launch-codexpp\.vbs/);
         assert.match(script, /codex-plus-plus-manager\.exe/);
+        assert.match(launcherScripts[0].contents, /cxpp\.js/);
+        assert.match(launcherScripts[0].contents, /launch/);
         assert.equal((script.match(/\$Shortcut\.Save\(\)/g) || []).length, 4);
         """
+    )
+
+
+def test_windows_launch_keeps_existing_codex_when_cdp_is_missing():
+    assert_node_ok(
+        SELF_HEAL_FIXTURE
+        + r"""
+        (async () => {
+          const fx = makeFixture('cxpp-preflight-');
+          fs.mkdirSync(fx.installRoot, { recursive: true });
+          fs.writeFileSync(path.join(fx.installRoot, 'codex-plus-plus.exe'), 'silent-bundled');
+          fs.writeFileSync(path.join(fx.installRoot, 'codex-plus-plus-manager.exe'), 'manager-bundled');
+          fs.writeFileSync(path.join(fx.installRoot, launcher.SIDECAR_VERSION_STAMP), fx.packageVersion + '\n');
+
+          const terminated = [];
+          const spawned = [];
+          const result = await launcher.runLauncher(['launch'], {
+            packageRoot: fx.root,
+            installRoot: fx.installRoot,
+            platform: 'win32',
+            arch: 'x64',
+            env: { CODEXPP_LANG: 'en' },
+            findRunningCodexProcesses() {
+              return [{ ProcessId: 4321, Name: 'Codex.exe' }];
+            },
+            cdpTargetsAvailable(debugPort) {
+              assert.equal(debugPort, 9229);
+              return false;
+            },
+            findRunningSidecarProcesses() {
+              return [];
+            },
+            terminateProcesses(processes) {
+              throw new Error('Codex should stay running when its CDP port is unavailable');
+            },
+            spawn(command, args) {
+              spawned.push({ command, args });
+              return { once() {}, unref() {}, pid: 1234 };
+            },
+          });
+
+          assert.equal(result.status, 0);
+          assert.deepEqual(terminated, []);
+          assert.equal(spawned[0].command, path.join(fx.installRoot, 'codex-plus-plus.exe'));
+        })().catch((error) => { console.error(error); process.exit(1); });
+        """
+    )
+
+
+def test_windows_launch_restarts_sidecar_only_when_cdp_is_missing():
+    assert_node_ok(
+        SELF_HEAL_FIXTURE
+        + r"""
+        (async () => {
+          const fx = makeFixture('cxpp-preflight-cdp-missing-sidecar-');
+          fs.mkdirSync(fx.installRoot, { recursive: true });
+          fs.writeFileSync(path.join(fx.installRoot, 'codex-plus-plus.exe'), 'silent-bundled');
+          fs.writeFileSync(path.join(fx.installRoot, 'codex-plus-plus-manager.exe'), 'manager-bundled');
+          fs.writeFileSync(path.join(fx.installRoot, launcher.SIDECAR_VERSION_STAMP), fx.packageVersion + '\n');
+
+          const terminated = [];
+          const spawned = [];
+          const result = await launcher.runLauncher(['launch'], {
+            packageRoot: fx.root,
+            installRoot: fx.installRoot,
+            platform: 'win32',
+            arch: 'x64',
+            env: { CODEXPP_LANG: 'en' },
+            findRunningCodexProcesses() {
+              return [{ ProcessId: 4321, Name: 'Codex.exe' }];
+            },
+            cdpTargetsAvailable(debugPort) {
+              assert.equal(debugPort, 9229);
+              return false;
+            },
+            findRunningSidecarProcesses() {
+              return [{ ProcessId: 8765, Name: 'codex-plus-plus.exe' }];
+            },
+            terminateProcesses(processes) {
+              terminated.push(...processes);
+            },
+            spawn(command, args) {
+              spawned.push({ command, args });
+              return { once() {}, unref() {}, pid: 1234 };
+            },
+          });
+
+          assert.equal(result.status, 0);
+          assert.deepEqual(terminated.map((processInfo) => processInfo.ProcessId), [8765]);
+          assert.equal(spawned[0].command, path.join(fx.installRoot, 'codex-plus-plus.exe'));
+        })().catch((error) => { console.error(error); process.exit(1); });
+        """
+    )
+
+
+def test_windows_launch_keeps_existing_codex_when_cdp_is_available():
+    assert_node_ok(
+        SELF_HEAL_FIXTURE
+        + r"""
+        (async () => {
+          const fx = makeFixture('cxpp-preflight-ok-');
+          fs.mkdirSync(fx.installRoot, { recursive: true });
+          fs.writeFileSync(path.join(fx.installRoot, 'codex-plus-plus.exe'), 'silent-bundled');
+          fs.writeFileSync(path.join(fx.installRoot, 'codex-plus-plus-manager.exe'), 'manager-bundled');
+          fs.writeFileSync(path.join(fx.installRoot, launcher.SIDECAR_VERSION_STAMP), fx.packageVersion + '\n');
+
+          const terminated = [];
+          const checkedPorts = [];
+          const result = await launcher.runLauncher(['launch'], {
+            packageRoot: fx.root,
+            installRoot: fx.installRoot,
+            platform: 'win32',
+            arch: 'x64',
+            env: { CODEXPP_LANG: 'en' },
+            findRunningCodexProcesses() {
+              return [{
+                ProcessId: 4321,
+                Name: 'Codex.exe',
+                CommandLine: '"Codex.exe" --remote-debugging-port=55798',
+              }];
+            },
+            cdpTargetsAvailable(debugPort) {
+              checkedPorts.push(debugPort);
+              return debugPort === 55798;
+            },
+            terminateProcesses(processes) {
+              terminated.push(...processes);
+            },
+            spawn() {
+              return { once() {}, unref() {}, pid: 1234 };
+            },
+          });
+
+          assert.equal(result.status, 0);
+          assert.deepEqual(checkedPorts, [55798]);
+          assert.deepEqual(terminated, []);
+        })().catch((error) => { console.error(error); process.exit(1); });
+        """
+    )
+
+
+def test_windows_launch_keeps_existing_sidecar_when_menu_is_present():
+    assert_node_ok(
+        SELF_HEAL_FIXTURE
+        + r"""
+        (async () => {
+          const fx = makeFixture('cxpp-preflight-ui-present-');
+          fs.mkdirSync(fx.installRoot, { recursive: true });
+          fs.writeFileSync(path.join(fx.installRoot, 'codex-plus-plus.exe'), 'silent-bundled');
+          fs.writeFileSync(path.join(fx.installRoot, 'codex-plus-plus-manager.exe'), 'manager-bundled');
+          fs.writeFileSync(path.join(fx.installRoot, launcher.SIDECAR_VERSION_STAMP), fx.packageVersion + '\n');
+
+          const terminated = [];
+          const result = await launcher.runLauncher(['launch'], {
+            packageRoot: fx.root,
+            installRoot: fx.installRoot,
+            platform: 'win32',
+            arch: 'x64',
+            env: { CODEXPP_LANG: 'en' },
+            findRunningCodexProcesses() {
+              return [{
+                ProcessId: 4321,
+                Name: 'Codex.exe',
+                CommandLine: '"Codex.exe" --remote-debugging-port=55798',
+              }];
+            },
+            cdpTargetsAvailable() {
+              return true;
+            },
+            codexPlusUiInjectionState() {
+              return 'present';
+            },
+            findRunningSidecarProcesses() {
+              throw new Error('sidecar process lookup should not run when UI is present');
+            },
+            terminateProcesses(processes) {
+              terminated.push(...processes);
+            },
+            spawn() {
+              return { once() {}, unref() {}, pid: 1234 };
+            },
+          });
+
+          assert.equal(result.status, 0);
+          assert.deepEqual(terminated, []);
+        })().catch((error) => { console.error(error); process.exit(1); });
+        """
+    )
+
+
+def test_windows_launch_keeps_existing_processes_when_ui_probe_is_unknown():
+    assert_node_ok(
+        SELF_HEAL_FIXTURE
+        + r"""
+        (async () => {
+          const fx = makeFixture('cxpp-preflight-ui-unknown-');
+          fs.mkdirSync(fx.installRoot, { recursive: true });
+          fs.writeFileSync(path.join(fx.installRoot, 'codex-plus-plus.exe'), 'silent-bundled');
+          fs.writeFileSync(path.join(fx.installRoot, 'codex-plus-plus-manager.exe'), 'manager-bundled');
+          fs.writeFileSync(path.join(fx.installRoot, launcher.SIDECAR_VERSION_STAMP), fx.packageVersion + '\n');
+
+          const terminated = [];
+          const result = await launcher.runLauncher(['launch'], {
+            packageRoot: fx.root,
+            installRoot: fx.installRoot,
+            platform: 'win32',
+            arch: 'x64',
+            env: { CODEXPP_LANG: 'en' },
+            findRunningCodexProcesses() {
+              return [{
+                ProcessId: 4321,
+                Name: 'Codex.exe',
+                CommandLine: '"Codex.exe" --remote-debugging-port=55798',
+              }];
+            },
+            cdpTargetsAvailable() {
+              return true;
+            },
+            codexPlusUiInjectionState() {
+              return 'unknown';
+            },
+            findRunningSidecarProcesses() {
+              throw new Error('sidecar process lookup should not run when UI state is unknown');
+            },
+            terminateProcesses(processes) {
+              terminated.push(...processes);
+            },
+            spawn() {
+              return { once() {}, unref() {}, pid: 1234 };
+            },
+          });
+
+          assert.equal(result.status, 0);
+          assert.deepEqual(terminated, []);
+        })().catch((error) => { console.error(error); process.exit(1); });
+        """
+    )
+
+
+def test_windows_launch_restarts_sidecar_when_cdp_is_available_but_menu_is_missing():
+    assert_node_ok(
+        SELF_HEAL_FIXTURE
+        + r"""
+        (async () => {
+          const fx = makeFixture('cxpp-preflight-ui-missing-');
+          fs.mkdirSync(fx.installRoot, { recursive: true });
+          fs.writeFileSync(path.join(fx.installRoot, 'codex-plus-plus.exe'), 'silent-bundled');
+          fs.writeFileSync(path.join(fx.installRoot, 'codex-plus-plus-manager.exe'), 'manager-bundled');
+          fs.writeFileSync(path.join(fx.installRoot, launcher.SIDECAR_VERSION_STAMP), fx.packageVersion + '\n');
+
+          const terminated = [];
+          const spawned = [];
+          const result = await launcher.runLauncher(['launch'], {
+            packageRoot: fx.root,
+            installRoot: fx.installRoot,
+            platform: 'win32',
+            arch: 'x64',
+            env: { CODEXPP_LANG: 'en' },
+            findRunningCodexProcesses() {
+              return [{
+                ProcessId: 4321,
+                Name: 'Codex.exe',
+                CommandLine: '"Codex.exe" --remote-debugging-port=55798',
+              }];
+            },
+            cdpTargetsAvailable(debugPort) {
+              assert.equal(debugPort, 55798);
+              return true;
+            },
+            codexPlusUiInjectionState(debugPort) {
+              assert.equal(debugPort, 55798);
+              return 'missing';
+            },
+            findRunningSidecarProcesses() {
+              return [{ ProcessId: 8765, Name: 'codex-plus-plus.exe' }];
+            },
+            terminateProcesses(processes) {
+              terminated.push(...processes);
+            },
+            spawn(command, args) {
+              spawned.push({ command, args });
+              return { once() {}, unref() {}, pid: 1234 };
+            },
+          });
+
+          assert.equal(result.status, 0);
+          assert.deepEqual(terminated.map((processInfo) => processInfo.ProcessId), [8765]);
+          assert.equal(spawned[0].command, path.join(fx.installRoot, 'codex-plus-plus.exe'));
+          assert.deepEqual(spawned[0].args, ['--debug-port', '55798']);
+        })().catch((error) => { console.error(error); process.exit(1); });
+        """
+    )
+
+
+def test_windows_launch_passes_existing_cdp_port_when_menu_is_missing_without_sidecar():
+    assert_node_ok(
+        SELF_HEAL_FIXTURE
+        + r"""
+        (async () => {
+          const fx = makeFixture('cxpp-preflight-ui-missing-port-');
+          fs.mkdirSync(fx.installRoot, { recursive: true });
+          fs.writeFileSync(path.join(fx.installRoot, 'codex-plus-plus.exe'), 'silent-bundled');
+          fs.writeFileSync(path.join(fx.installRoot, 'codex-plus-plus-manager.exe'), 'manager-bundled');
+          fs.writeFileSync(path.join(fx.installRoot, launcher.SIDECAR_VERSION_STAMP), fx.packageVersion + '\n');
+
+          const spawned = [];
+          let terminatedByName = 0;
+          const result = await launcher.runLauncher(['launch'], {
+            packageRoot: fx.root,
+            installRoot: fx.installRoot,
+            platform: 'win32',
+            arch: 'x64',
+            env: { CODEXPP_LANG: 'en' },
+            findRunningCodexProcesses() {
+              return [{
+                ProcessId: 4321,
+                Name: 'Codex.exe',
+                CommandLine: '"Codex.exe" --remote-debugging-port=9229',
+              }];
+            },
+            cdpTargetsAvailable(debugPort) {
+              assert.equal(debugPort, 9229);
+              return true;
+            },
+            codexPlusUiInjectionState(debugPort) {
+              assert.equal(debugPort, 9229);
+              return 'missing';
+            },
+            findRunningSidecarProcesses() {
+              return [];
+            },
+            terminateSidecarsByImageName() {
+              terminatedByName += 1;
+              return true;
+            },
+            terminateProcesses() {
+              throw new Error('Codex should stay running when its CDP port is available');
+            },
+            spawn(command, args) {
+              spawned.push({ command, args });
+              return { once() {}, unref() {}, pid: 1234 };
+            },
+          });
+
+          assert.equal(result.status, 0);
+          assert.equal(terminatedByName, 1);
+          assert.equal(spawned[0].command, path.join(fx.installRoot, 'codex-plus-plus.exe'));
+          assert.deepEqual(spawned[0].args, ['--debug-port', '9229']);
+        })().catch((error) => { console.error(error); process.exit(1); });
+        """
+    )
+
+
+def test_windows_terminate_processes_uses_taskkill_fallback():
+    assert_node_ok(
+        r"""
+        const assert = require('node:assert/strict');
+        const launcher = require('./npm/launcher.js');
+
+        const calls = [];
+        launcher.terminateProcesses(
+          [{ ProcessId: 111, Name: 'codex-plus-plus.exe' }, { ProcessId: 111 }, { ProcessId: 222 }],
+          {
+            env: {},
+            spawnSync(command, args, options) {
+              calls.push({ command, args, options });
+              return { status: 0, stdout: '', stderr: '' };
+            },
+          },
+        );
+
+        assert.equal(calls.length, 2);
+        assert.equal(calls[0].command, 'powershell.exe');
+        assert.equal(calls[0].options.env.CODEXPP_PROCESS_IDS, '111,222');
+        assert.equal(calls[1].command, 'taskkill.exe');
+        assert.deepEqual(calls[1].args, ['/F', '/PID', '111', '/PID', '222']);
+      """
+    )
+
+
+def test_windows_terminate_sidecars_by_image_name_uses_taskkill_without_pid_lookup():
+    assert_node_ok(
+        r"""
+        const assert = require('node:assert/strict');
+        const launcher = require('./npm/launcher.js');
+
+        const calls = [];
+        const terminated = launcher.terminateSidecarsByImageName({
+          platform: 'win32',
+          env: {},
+          spawnSync(command, args, options) {
+            calls.push({ command, args, options });
+            return { status: 0, stdout: '', stderr: '' };
+          },
+        });
+
+        assert.equal(terminated, true);
+        assert.equal(calls.length, 1);
+        assert.equal(calls[0].command, 'taskkill.exe');
+        assert.deepEqual(calls[0].args, ['/F', '/IM', 'codex-plus-plus.exe']);
+      """
     )
 
 
