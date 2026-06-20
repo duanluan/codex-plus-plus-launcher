@@ -412,6 +412,153 @@ def test_windows_launch_keeps_existing_processes_when_ui_probe_is_unknown():
     )
 
 
+def test_ui_injection_probe_supports_ipv6_loopback_cdp():
+    assert_node_ok(
+        r"""
+        const assert = require('node:assert/strict');
+        const { spawn } = require('node:child_process');
+        const launcher = require('./npm/launcher.js');
+
+        const serverSource = String.raw`
+        const http = require('node:http');
+        const crypto = require('node:crypto');
+
+        function websocketAccept(key) {
+          return crypto
+            .createHash('sha1')
+            .update(key + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11')
+            .digest('base64');
+        }
+
+        function encodeServerTextFrame(text) {
+          const payload = Buffer.from(text, 'utf8');
+          const header = Buffer.alloc(payload.length < 126 ? 2 : 4);
+          header[0] = 0x81;
+          if (payload.length < 126) {
+            header[1] = payload.length;
+          } else {
+            header[1] = 126;
+            header.writeUInt16BE(payload.length, 2);
+          }
+          return Buffer.concat([header, payload]);
+        }
+
+        function firstClientTextFrame(buffer) {
+          if (buffer.length < 6) return null;
+          let length = buffer[1] & 0x7f;
+          let offset = 2;
+          if (length === 126) {
+            if (buffer.length < 8) return null;
+            length = buffer.readUInt16BE(2);
+            offset = 4;
+          }
+          if (buffer.length < offset + 4 + length) return null;
+          const mask = buffer.subarray(offset, offset + 4);
+          offset += 4;
+          const payload = Buffer.from(buffer.subarray(offset, offset + length));
+          for (let index = 0; index < payload.length; index += 1) {
+            payload[index] ^= mask[index % 4];
+          }
+          return JSON.parse(payload.toString('utf8'));
+        }
+
+        const server = http.createServer((req, res) => {
+          if (req.url === '/json/list' || req.url === '/json') {
+            res.setHeader('content-type', 'application/json');
+            res.end(JSON.stringify([{
+              type: 'page',
+              webSocketDebuggerUrl: 'ws://[::1]:' + server.address().port + '/devtools/page/fixture',
+            }]));
+            return;
+          }
+          res.statusCode = 404;
+          res.end();
+        });
+
+        server.on('upgrade', (req, socket) => {
+          const key = req.headers['sec-websocket-key'];
+          socket.write([
+            'HTTP/1.1 101 Switching Protocols',
+            'Upgrade: websocket',
+            'Connection: Upgrade',
+            'Sec-WebSocket-Accept: ' + websocketAccept(key),
+            '',
+            '',
+          ].join('\r\n'));
+
+          let buffer = Buffer.alloc(0);
+          socket.on('data', (chunk) => {
+            buffer = Buffer.concat([buffer, chunk]);
+            const message = firstClientTextFrame(buffer);
+            if (!message) return;
+            socket.write(encodeServerTextFrame(JSON.stringify({
+              id: message.id,
+              result: { result: { type: 'boolean', value: true } },
+            })));
+          });
+        });
+
+        process.on('SIGTERM', () => server.close(() => process.exit(0)));
+        server.listen({ host: '::1', port: 0 }, () => {
+          console.log('PORT ' + server.address().port);
+        });
+        `;
+
+        function waitForPort(child) {
+          return new Promise((resolve, reject) => {
+            let settled = false;
+            let stdout = '';
+            let stderr = '';
+            const timer = setTimeout(() => {
+              if (!settled) {
+                settled = true;
+                reject(new Error('CDP fixture server did not start: ' + stderr + stdout));
+              }
+            }, 5000);
+
+            child.stdout.setEncoding('utf8');
+            child.stdout.on('data', (chunk) => {
+              stdout += chunk;
+              const match = stdout.match(/PORT (\d+)/);
+              if (match && !settled) {
+                settled = true;
+                clearTimeout(timer);
+                resolve(Number(match[1]));
+              }
+            });
+            child.stderr.setEncoding('utf8');
+            child.stderr.on('data', (chunk) => {
+              stderr += chunk;
+            });
+            child.on('exit', (code, signal) => {
+              if (!settled) {
+                settled = true;
+                clearTimeout(timer);
+                reject(new Error('CDP fixture server exited: ' + code + '/' + signal + ' ' + stderr));
+              }
+            });
+          });
+        }
+
+        (async () => {
+          const server = spawn(process.execPath, ['-e', serverSource], {
+            stdio: ['ignore', 'pipe', 'pipe'],
+            windowsHide: true,
+          });
+          const port = await waitForPort(server);
+          try {
+            const state = launcher.codexPlusUiInjectionState(port, {
+              uiInjectionProbeTimeoutMs: 2000,
+            });
+            assert.equal(state, 'present');
+          } finally {
+            server.kill();
+          }
+        })().catch((error) => { console.error(error); process.exit(1); });
+        """
+    )
+
+
 def test_windows_launch_restarts_sidecar_when_cdp_is_available_but_menu_is_missing():
     assert_node_ok(
         SELF_HEAL_FIXTURE
@@ -847,7 +994,7 @@ def test_install_sidecars_writes_version_stamp():
 
         const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cxpp-stamp-'));
         const installRoot = path.join(root, 'install');
-        fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ version: '1.2.18' }));
+        fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ version: '1.2.19' }));
         fs.mkdirSync(path.join(root, 'upstream-bin', 'win32-x64'), { recursive: true });
         fs.writeFileSync(path.join(root, 'upstream-bin', 'upstream-release.json'), JSON.stringify({ version: 'v1.1.7' }));
         fs.writeFileSync(path.join(root, 'upstream-bin', 'win32-x64', 'codex-plus-plus.exe'), 'silent');
@@ -857,7 +1004,7 @@ def test_install_sidecars_writes_version_stamp():
         (async () => {
           await launcher.installSidecars({ packageRoot: root, installRoot, platform: 'win32', arch: 'x64' });
           const stamp = fs.readFileSync(path.join(installRoot, launcher.SIDECAR_VERSION_STAMP), 'utf8');
-          assert.equal(stamp.trim(), '1.2.18');
+          assert.equal(stamp.trim(), '1.2.19');
         })().catch((error) => {
           console.error(error);
           process.exit(1);
@@ -879,7 +1026,7 @@ def test_install_sidecars_refreshes_version_stamp_on_upgrade():
         const installRoot = path.join(root, 'install');
         fs.mkdirSync(installRoot, { recursive: true });
         fs.writeFileSync(path.join(installRoot, launcher.SIDECAR_VERSION_STAMP), '1.2.5\n');
-        fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ version: '1.2.18' }));
+        fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ version: '1.2.19' }));
         fs.mkdirSync(path.join(root, 'upstream-bin', 'win32-x64'), { recursive: true });
         fs.writeFileSync(path.join(root, 'upstream-bin', 'upstream-release.json'), JSON.stringify({ version: 'v1.1.7' }));
         fs.writeFileSync(path.join(root, 'upstream-bin', 'win32-x64', 'codex-plus-plus.exe'), 'silent');
@@ -889,7 +1036,7 @@ def test_install_sidecars_refreshes_version_stamp_on_upgrade():
         (async () => {
           await launcher.installSidecars({ packageRoot: root, installRoot, platform: 'win32', arch: 'x64' });
           const stamp = fs.readFileSync(path.join(installRoot, launcher.SIDECAR_VERSION_STAMP), 'utf8');
-          assert.equal(stamp.trim(), '1.2.18');
+          assert.equal(stamp.trim(), '1.2.19');
         })().catch((error) => {
           console.error(error);
           process.exit(1);
@@ -910,7 +1057,7 @@ def test_install_sidecars_stamp_failure_is_nonfatal():
 
         const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cxpp-stamp-nonfatal-'));
         const installRoot = path.join(root, 'install');
-        fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ version: '1.2.18' }));
+        fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ version: '1.2.19' }));
         fs.mkdirSync(path.join(root, 'upstream-bin', 'win32-x64'), { recursive: true });
         fs.writeFileSync(path.join(root, 'upstream-bin', 'upstream-release.json'), JSON.stringify({ version: 'v1.1.7' }));
         fs.writeFileSync(path.join(root, 'upstream-bin', 'win32-x64', 'codex-plus-plus.exe'), 'silent');
@@ -1054,7 +1201,7 @@ function makeFixture(prefix, opts) {
   const platform = opts.platform || 'win32';
   const arch = opts.arch || 'x64';
   const platDir = platform + '-' + arch;
-  const packageVersion = opts.packageVersion || '1.2.18';
+  const packageVersion = opts.packageVersion || '1.2.19';
   fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ version: packageVersion }));
   fs.mkdirSync(path.join(root, 'upstream-bin', platDir), { recursive: true });
   fs.writeFileSync(path.join(root, 'upstream-bin', 'upstream-release.json'), JSON.stringify({ version: 'v1.1.7' }));
@@ -1086,7 +1233,7 @@ def test_self_heal_noop_when_drift_is_none():
           fs.mkdirSync(fx.installRoot, { recursive: true });
           fs.writeFileSync(path.join(fx.installRoot, 'codex-plus-plus.exe'), 'silent-bundled');
           fs.writeFileSync(path.join(fx.installRoot, 'codex-plus-plus-manager.exe'), 'manager-bundled');
-          fs.writeFileSync(path.join(fx.installRoot, launcher.SIDECAR_VERSION_STAMP), '1.2.18\n');
+          fs.writeFileSync(path.join(fx.installRoot, launcher.SIDECAR_VERSION_STAMP), '1.2.19\n');
 
           const stderr = captureStderr();
           const result = await launcher.ensureSidecarsFresh({
@@ -1128,11 +1275,11 @@ def test_self_heal_reinstalls_on_mismatch():
           assert.equal(result.action, 'reinstalled');
           assert.equal(result.drift, 'mismatch');
           assert.equal(result.before, '1.2.5');
-          assert.equal(result.after, '1.2.18');
+          assert.equal(result.after, '1.2.19');
           assert.equal(fs.readFileSync(path.join(fx.installRoot, 'codex-plus-plus.exe'), 'utf8'), 'silent-bundled');
-          assert.equal(fs.readFileSync(path.join(fx.installRoot, launcher.SIDECAR_VERSION_STAMP), 'utf8').trim(), '1.2.18');
+          assert.equal(fs.readFileSync(path.join(fx.installRoot, launcher.SIDECAR_VERSION_STAMP), 'utf8').trim(), '1.2.19');
           assert.match(stderr.text(), /refreshed the local sidecar/);
-          assert.match(stderr.text(), /1\.2\.5 -> 1\.2\.18/);
+          assert.match(stderr.text(), /1\.2\.5 -> 1\.2\.19/);
         })().catch((error) => { console.error(error); process.exit(1); });
         """
     )
@@ -1162,8 +1309,8 @@ def test_self_heal_reinstalls_on_unknown_when_stamp_missing():
           assert.equal(result.action, 'reinstalled');
           assert.equal(result.drift, 'unknown');
           assert.equal(result.before, null);
-          assert.equal(result.after, '1.2.18');
-          assert.equal(fs.readFileSync(path.join(fx.installRoot, launcher.SIDECAR_VERSION_STAMP), 'utf8').trim(), '1.2.18');
+          assert.equal(result.after, '1.2.19');
+          assert.equal(fs.readFileSync(path.join(fx.installRoot, launcher.SIDECAR_VERSION_STAMP), 'utf8').trim(), '1.2.19');
         })().catch((error) => { console.error(error); process.exit(1); });
         """
     )

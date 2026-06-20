@@ -447,10 +447,12 @@ function exitSoon(code) {
   }
 }
 
-function readJson(pathname) {
+const HTTP_HOSTS = ['localhost', '127.0.0.1', '::1'];
+
+function readJsonFromHost(host, pathname) {
   return new Promise((resolve, reject) => {
     const request = http.get({
-      host: '127.0.0.1',
+      host,
       port: debugPort,
       path: pathname,
       timeout: 1500,
@@ -471,13 +473,30 @@ function readJson(pathname) {
   });
 }
 
+async function readJson(pathname) {
+  let lastError = null;
+  for (const host of HTTP_HOSTS) {
+    try {
+      return await readJsonFromHost(host, pathname);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError || new Error('CDP HTTP unavailable');
+}
+
 function parseWebSocketTarget(webSocketDebuggerUrl) {
   const parsed = new URL(webSocketDebuggerUrl);
   if (parsed.protocol !== 'ws:') {
     throw new Error('unsupported websocket protocol');
   }
+  const host = parsed.hostname.startsWith('[') && parsed.hostname.endsWith(']')
+    ? parsed.hostname.slice(1, -1)
+    : parsed.hostname;
+  const hostHeader = host.includes(':') ? '[' + host + ']' : host;
   return {
-    host: parsed.hostname,
+    host,
+    hostHeader,
     port: Number(parsed.port || 80),
     path: (parsed.pathname || '/') + (parsed.search || ''),
   };
@@ -617,7 +636,7 @@ function evaluateMenuState(webSocketDebuggerUrl) {
       const key = crypto.randomBytes(16).toString('base64');
       socket.write([
         'GET ' + target.path + ' HTTP/1.1',
-        'Host: ' + target.host + ':' + target.port,
+        'Host: ' + target.hostHeader + ':' + target.port,
         'Upgrade: websocket',
         'Connection: Upgrade',
         'Sec-WebSocket-Key: ' + key,
