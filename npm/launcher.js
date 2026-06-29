@@ -402,6 +402,39 @@ function findRunningSidecarProcesses(options = {}) {
   }
 }
 
+function findRunningCodexPlusManagerProcesses(options = {}) {
+  const platform = optionValue(options, 'platform', process.platform);
+  if (platform !== 'win32') {
+    return [];
+  }
+  if (typeof options.findRunningCodexPlusManagerProcesses === 'function') {
+    return options.findRunningCodexPlusManagerProcesses(options) || [];
+  }
+
+  const run = options.processSpawnSync || (options.spawnSync ? null : spawnSync);
+  if (!run) {
+    return [];
+  }
+  const script = [
+    '$ErrorActionPreference = "SilentlyContinue"',
+    'Get-CimInstance Win32_Process | Where-Object {',
+    '  $_.Name -ieq "codex-plus-plus-manager.exe"',
+    '} | Select-Object ProcessId,Name,ExecutablePath,CommandLine | ConvertTo-Json -Compress',
+  ].join('\n');
+  const result = run('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', script], {
+    encoding: 'utf8',
+    windowsHide: true,
+  });
+  if (!result || result.status !== 0) {
+    return [];
+  }
+  try {
+    return parsePowerShellJson(result.stdout);
+  } catch (_error) {
+    return [];
+  }
+}
+
 function cdpTargetsAvailable(debugPort, options = {}) {
   if (typeof options.cdpTargetsAvailable === 'function') {
     return options.cdpTargetsAvailable(debugPort, options);
@@ -777,6 +810,22 @@ function preflightWindowsCodexLaunch(args = [], options = {}) {
   const requestedDebugPort = launchDebugPort(args);
   const runningDebugPorts = codexProcessDebugPorts(processes);
   const portsToCheck = runningDebugPorts.length > 0 ? runningDebugPorts : [requestedDebugPort];
+  if (runningDebugPorts.length === 0) {
+    const terminate = options.terminateProcesses || terminateProcesses;
+    terminate(processes, options);
+    const sidecars = findRunningSidecarProcesses(options);
+    if (sidecars.length > 0) {
+      terminate(sidecars, options);
+    } else {
+      terminateSidecarsByImageName(options);
+    }
+    return {
+      action: 'terminated_codex_for_missing_cdp',
+      debugPort: requestedDebugPort,
+      processCount: processes.length,
+      sidecarCount: sidecars.length,
+    };
+  }
   if (runningDebugPorts.length > 0) {
     const availableDebugPort = portsToCheck.find((debugPort) => cdpTargetsAvailable(debugPort, options));
     if (availableDebugPort) {
@@ -1038,9 +1087,8 @@ async function installSidecars(options = {}) {
   return installed;
 }
 
-function readInstalledSidecarVersion(options = {}) {
+function readInstalledSidecarStampVersion(options = {}) {
   const fsImpl = options.fs || fs;
-  const platform = optionValue(options, 'platform', process.platform);
   const installRoot = optionValue(options, 'installRoot', () => detectedInstallRoot(options));
   const stampPath = path.join(installRoot, SIDECAR_VERSION_STAMP);
   try {
@@ -1050,21 +1098,25 @@ function readInstalledSidecarVersion(options = {}) {
       return first;
     }
   } catch (_error) {
-    // stamp absent or unreadable; fall through to platform probe
+    // stamp absent or unreadable
   }
-  if (platform !== 'win32') {
-    return null;
-  }
+  return null;
+}
+
+function readWindowsSidecarBinaryVersion(options = {}) {
+  const fsImpl = options.fs || fs;
+  const installRoot = optionValue(options, 'installRoot', () => detectedInstallRoot(options));
   const silent = installedSidecarPath('silent', { ...options, installRoot });
   if (!fsImpl.existsSync(silent)) {
     return null;
   }
   const run = options.spawnSync || spawnSync;
   try {
+    const env = { ...(options.env || process.env), CODEXPP_VERSION_PROBE_PATH: silent };
     const result = run(
-      'powershell',
-      ['-NoProfile', '-NonInteractive', '-Command', '(Get-Item -LiteralPath $args[0]).VersionInfo.FileVersion', '--', silent],
-      { encoding: 'utf8', windowsHide: true },
+      'powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-Command', '(Get-Item -LiteralPath $env:CODEXPP_VERSION_PROBE_PATH).VersionInfo.FileVersion'],
+      { encoding: 'utf8', env, windowsHide: true },
     );
     if (result && result.status === 0) {
       const out = String(result.stdout || '').trim();
@@ -1076,6 +1128,14 @@ function readInstalledSidecarVersion(options = {}) {
     // probe failed; treat as unknown
   }
   return null;
+}
+
+function readInstalledSidecarVersion(options = {}) {
+  const platform = optionValue(options, 'platform', process.platform);
+  if (platform !== 'win32') {
+    return readInstalledSidecarStampVersion(options);
+  }
+  return readWindowsSidecarBinaryVersion(options) || readInstalledSidecarStampVersion(options);
 }
 
 function computeSidecarDrift(options = {}) {
@@ -1096,6 +1156,38 @@ function computeSidecarDrift(options = {}) {
     return 'unknown';
   }
   return installed === bundled ? 'none' : 'mismatch';
+}
+
+function stopCodexPlusProcesses(options = {}) {
+  const platform = optionValue(options, 'platform', process.platform);
+  if (platform !== 'win32') {
+    return { status: 1, error: new Error('cxpp stop is only supported on Windows in this package') };
+  }
+  const sidecars = findRunningSidecarProcesses(options);
+  const managers = findRunningCodexPlusManagerProcesses(options);
+  const codex = findRunningCodexProcesses(options);
+  const targets = [...sidecars, ...managers, ...codex];
+  const uniqueTargets = [];
+  const seen = new Set();
+  for (const target of targets) {
+    const id = Number(target && target.ProcessId);
+    if (!Number.isInteger(id) || id <= 0 || seen.has(id)) {
+      continue;
+    }
+    seen.add(id);
+    uniqueTargets.push(target);
+  }
+  if (uniqueTargets.length > 0) {
+    const terminate = options.terminateProcesses || terminateProcesses;
+    terminate(uniqueTargets, options);
+  }
+  return {
+    status: 0,
+    stoppedCount: uniqueTargets.length,
+    sidecarCount: sidecars.length,
+    managerCount: managers.length,
+    codexCount: codex.length,
+  };
 }
 
 async function ensureSidecarsFresh(options = {}) {
@@ -1833,17 +1925,23 @@ function doctorReport(options = {}) {
   const sidecars = installedSidecars(options);
   const entrypoints = inspectEntrypoints(options);
   const supported = SUPPORTED_PLATFORMS.has(platformKey(platform, arch));
+  const installedVersion = readInstalledSidecarVersion({ ...options, installRoot });
+  const expectedVersion = packageVersion(options);
+  const drift = computeSidecarDrift(options);
   const report = {
     platform,
     arch,
     supported: supported ? 'yes' : 'no',
-    package_version: packageVersion(options),
+    package_version: expectedVersion,
     upstream_version: bundledUpstreamVersion(options) || 'missing',
     upstream_commit: upstreamMetadata(options).commit || 'missing',
     sidecar_dir: upstreamBinDir(options),
     install_root: installRoot,
     silent_binary: sidecars.silent,
     silent_binary_state: sidecars.silent_state,
+    expected_sidecar_version: expectedVersion,
+    installed_sidecar_version: installedVersion || 'missing',
+    sidecar_drift: drift,
     manager_binary: sidecars.manager,
     manager_binary_state: sidecars.manager_state,
     silent_entrypoint_state: entrypoints.silent,
@@ -1946,6 +2044,7 @@ Usage:
   cxpp manager               Open Codex++ manager
   cxpp install-app           Install or repair local entrypoints
   cxpp repair-app            Alias of install-app
+  cxpp stop                  Stop running Codex++ and Codex processes
   cxpp doctor [--json]       Inspect local state
   cxpp version               Print wrapper version
 `);
@@ -1963,6 +2062,17 @@ async function runLauncher(args = [], options = {}) {
   }
   if (command === 'doctor') {
     return { status: printDoctor(args.includes('--json'), options) };
+  }
+  if (command === 'stop') {
+    const result = stopCodexPlusProcesses(options);
+    if (result.error) {
+      return result;
+    }
+    console.log(`stopped_processes=${result.stoppedCount}`);
+    console.log(`sidecar_processes=${result.sidecarCount}`);
+    console.log(`manager_processes=${result.managerCount}`);
+    console.log(`codex_processes=${result.codexCount}`);
+    return result;
   }
   if (command === 'install-app' || command === 'repair-app' || command === 'setup' || command === 'repair' || command === 'npm-postinstall') {
     const supported = SUPPORTED_PLATFORMS.has(platformKey(optionValue(options, 'platform', process.platform), optionValue(options, 'arch', process.arch)));
@@ -2047,9 +2157,12 @@ module.exports = {
   sidecarArgsWithDebugPort,
   promptYesNoWindowsPopup,
   readInstalledSidecarVersion,
+  readInstalledSidecarStampVersion,
+  readWindowsSidecarBinaryVersion,
   removePath,
   runLauncher,
   spawnSidecar,
+  stopCodexPlusProcesses,
   terminateProcesses,
   terminateSidecarsByImageName,
   upstreamBinDir,
