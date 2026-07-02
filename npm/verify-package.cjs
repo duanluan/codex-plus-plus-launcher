@@ -30,8 +30,13 @@ function verifyUpstreamMetadata(root = packageRoot()) {
     throw new Error(`missing required upstream release metadata: ${expected}`);
   }
   const payload = JSON.parse(fs.readFileSync(expected, 'utf8'));
-  if (!payload.version && !payload.tag && !payload.upstream_version) {
+  const upstreamVersion = payload.version || payload.tag || payload.upstream_version;
+  if (!upstreamVersion) {
     throw new Error(`upstream release metadata does not contain a version: ${expected}`);
+  }
+  const packageVersion = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).version;
+  if (String(upstreamVersion).replace(/^v/i, '') !== packageVersion) {
+    throw new Error(`bundled upstream version ${upstreamVersion} does not match package version ${packageVersion}`);
   }
   return expected;
 }

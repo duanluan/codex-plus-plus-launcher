@@ -25,6 +25,31 @@ def assert_node_ok(script: str) -> None:
     assert result.returncode == 0, result.stderr or result.stdout
 
 
+def test_prepack_rejects_bundled_upstream_version_mismatch():
+    assert_node_ok(
+        r"""
+        const assert = require('node:assert/strict');
+        const fs = require('node:fs');
+        const os = require('node:os');
+        const path = require('node:path');
+        const verify = require('./npm/verify-package.cjs');
+
+        const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cxpp-verify-version-'));
+        fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ version: '1.2.30' }));
+        fs.mkdirSync(path.join(root, 'upstream-bin'), { recursive: true });
+        fs.writeFileSync(path.join(root, 'upstream-bin', 'upstream-release.json'), JSON.stringify({ version: 'v1.2.15' }));
+
+        assert.throws(
+          () => verify.verifyUpstreamMetadata(root),
+          /bundled upstream version v1\.2\.15 does not match package version 1\.2\.30/
+        );
+
+        fs.writeFileSync(path.join(root, 'upstream-bin', 'upstream-release.json'), JSON.stringify({ version: 'v1.2.30' }));
+        assert.equal(verify.verifyUpstreamMetadata(root), path.join(root, 'upstream-bin', 'upstream-release.json'));
+        """
+    )
+
+
 def test_dispatcher_launch_manager_doctor_and_install_app():
     assert_node_ok(
         r"""

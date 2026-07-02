@@ -108,7 +108,7 @@ def test_smoke_install_uses_current_package_version_tarball():
 def test_package_exposes_only_explicit_commands():
     content = Path("package.json").read_text(encoding="utf-8")
 
-    assert '"version": "1.2.28"' in content
+    assert '"version": "1.2.30"' in content
     assert '"codex_plus_plus_launcher/*.py"' in content
     assert '"codex_plus_plus_launcher/assets/*"' in content
     assert '"upstream-bin/**"' in content
@@ -136,12 +136,15 @@ def test_plugin_nav_unlock_patch_keeps_contextual_hunks():
     patch = Path("patches/codex-plus-plus-plugin-unlock.patch").read_text(encoding="utf-8")
     renderer_patch = patch.split("diff --git a/crates/codex-plus-core/src/bridge.rs", 1)[0]
 
-    assert "@@ -2702,6 +2703,160 @@" in renderer_patch
+    assert "@@ -3043,6 +3044,160 @@" in renderer_patch
     assert "@@ -2704,0 +2706,153 @@" not in renderer_patch
     assert "+  function pluginNavButtonCandidates()" in renderer_patch
-    assert " function restorePluginMarketplaceName(name) {" in renderer_patch
+    assert "openai-api-curated" in renderer_patch
+    assert renderer_patch.index("openai-api-curated") < renderer_patch.index(
+        "+  function pluginNavButtonCandidates()"
+    )
     assert renderer_patch.index("+  function pluginNavButtonCandidates()") < renderer_patch.index(
-        " function restorePluginMarketplaceName(name) {"
+        " function isCodexPluginBuildFlavorFilter(callback, sample) {"
     )
 
 

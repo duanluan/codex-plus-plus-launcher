@@ -41,6 +41,8 @@ def test_release_workflow_publishes_npm_only():
     assert "payload[\"ref\"] = upstream_ref" in content
     assert "payload[\"package_version\"] = package_version" in content
     assert "print(f\"CODEXPP_UPSTREAM_REF={upstream_ref}\")" in content
+    assert ".github/upstream-sync/latest.json does not match package version" in content
+    assert "upstream_package_version" in content
 
 
 def test_manual_npm_publish_workflow_exists():

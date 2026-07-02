@@ -1,17 +1,17 @@
 diff --git a/assets/inject/renderer-inject.js b/assets/inject/renderer-inject.js
-index fa775b1..920c25e 100644
+index f926f96..5517980 100644
 --- a/assets/inject/renderer-inject.js
 +++ b/assets/inject/renderer-inject.js
-@@ -67,6 +67,7 @@
+@@ -331,6 +331,7 @@
    const codexServiceTierRequestOverrideVersion = "3";
    const codexAppServerModelRequestPatchVersion = "1";
-   const codexPluginMarketplaceUnlockVersion = "10";
+   const codexPluginMarketplaceUnlockVersion = "12";
 +  const codexPluginNavUnlockVersion = "2";
-   const codexThreadScrollMaxEntries = 120;
-   const codexThreadScrollSaveThrottleMs = 120;
-   const codexThreadScrollRestoreWindowMs = 3200;
-@@ -2702,6 +2703,160 @@
-     return true;
+   const codexPluginAutoExpandVersion = "1";
+   const codexPluginAutoExpandMaxClicks = 80;
+   const codexPluginAutoExpandClickDelayMs = 90;
+@@ -3043,6 +3044,160 @@
+     return restored === "openai-bundled" || restored === "openai-curated" || restored === "openai-primary-runtime" || restored === "openai-api-curated" || restored === "openai-curated-remote";
    }
  
 +  function pluginNavButtonCandidates() {
@@ -168,26 +168,26 @@ index fa775b1..920c25e 100644
 +    }, codexForcePluginInstallRefreshIntervalMs);
 +  }
 +
-   function restorePluginMarketplaceName(name) {
-     if (name === "codex-plus-openai-bundled") return "openai-bundled";
-     if (name === "codex-plus-openai-curated") return "openai-curated";
-@@ -7659,6 +7814,8 @@
-     installStyle();
+   function isCodexPluginBuildFlavorFilter(callback, sample) {
+     if (!Array.isArray(sample) || sample.length === 0 || typeof callback !== "function") return false;
+     let source = "";
+@@ -8002,6 +8157,8 @@
      installCodexServiceTierDispatcherPatch();
      installCodexPlusMenu();
+     localizeCodexMenus();
 +    unlockPluginNavButtons();
 +    refreshPluginNavUnlockLoop();
      scheduleBackendHeartbeat();
      installDeleteButtonEventDelegation();
      updateThreadScrollHandlers();
-@@ -8322,6 +8479,7 @@
+@@ -8668,6 +8825,7 @@
        ".composer-footer",
        selectors.appHeader,
        selectors.archiveNav,
 +      selectors.pluginNavButton,
+       codexMenuLocalizationScopeSelector(),
        ...(pluginPatchDisabledInRelayMode() ? [] : [selectors.disabledInstallButton]),
      ].join(", ");
-   }
 diff --git a/crates/codex-plus-core/src/bridge.rs b/crates/codex-plus-core/src/bridge.rs
 index 52ea388..b903025 100644
 --- a/crates/codex-plus-core/src/bridge.rs
@@ -202,10 +202,10 @@ index 52ea388..b903025 100644
      return Promise.race([
        Promise.resolve(bridge("/backend/status", {})).then((result) => !!result && result.status === "ok"),
 diff --git a/crates/codex-plus-core/src/ports.rs b/crates/codex-plus-core/src/ports.rs
-index cfa4933..5d33223 100644
+index 2263b21..b844363 100644
 --- a/crates/codex-plus-core/src/ports.rs
 +++ b/crates/codex-plus-core/src/ports.rs
-@@ -27,11 +27,11 @@ pub fn select_packaged_codex_debug_port(requested: u16) -> u16 {
+@@ -83,11 +83,11 @@ pub fn select_packaged_codex_debug_port(requested: u16) -> u16 {
  
  pub fn select_packaged_codex_debug_port_with(
      requested: u16,
@@ -222,10 +222,10 @@ index cfa4933..5d33223 100644
  
  pub fn select_platform_loopback_port_with(
 diff --git a/crates/codex-plus-core/tests/cdp_bridge.rs b/crates/codex-plus-core/tests/cdp_bridge.rs
-index c8fe983..c2f918e 100644
+index e7683a5..983cd98 100644
 --- a/crates/codex-plus-core/tests/cdp_bridge.rs
 +++ b/crates/codex-plus-core/tests/cdp_bridge.rs
-@@ -830,11 +830,24 @@ fn bridge_health_check_script_uses_real_backend_round_trip() {
+@@ -975,11 +975,24 @@ fn bridge_health_check_script_uses_real_backend_round_trip() {
      let script = bridge::bridge_health_check_script();
  
      assert!(script.contains("__codexSessionDeleteBridge"));
@@ -251,10 +251,10 @@ index c8fe983..c2f918e 100644
  fn bridge_result_expressions_json_escape_inputs() {
      let resolve = bridge::resolve_bridge_expression("request\"1", &json!({"status": "ok"}))
 diff --git a/crates/codex-plus-core/tests/launcher.rs b/crates/codex-plus-core/tests/launcher.rs
-index 5c13508..9f7319e 100644
+index ec12600..66f80b2 100644
 --- a/crates/codex-plus-core/tests/launcher.rs
 +++ b/crates/codex-plus-core/tests/launcher.rs
-@@ -372,10 +372,10 @@ fn ports_windows_falls_back_to_ephemeral_when_requested_is_busy() {
+@@ -500,10 +500,10 @@ fn ports_windows_falls_back_to_ephemeral_when_requested_is_busy() {
  }
  
  #[test]
